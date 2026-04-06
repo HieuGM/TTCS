@@ -1,0 +1,16 @@
+# Bỏ qua toàn bộ tất cả file và thư mục trong dự án
+/*
+
+# --- DANH SÁCH ĐƯỢC CHO PHÉP (WHITELIST) ---
+# Cho phép track thư mục src/ và nội dung bên trong
+!/src/
+
+# Cho phép track file main.py
+!/main.py
+
+# Khuyến nghị: Nên giữ lại cả file .gitignore để push lên repo
+!/.gitignore
+
+# (Tuỳ chọn: Mở comment 2 dòng dưới nếu bạn muốn push cả requirements.txt và .env.example)
+#!/requirements.txt
+#!/.env.example
