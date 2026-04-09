@@ -69,9 +69,18 @@ def ingest_data(file_path: str):
     print("Hoàn tất lập chỉ mục toàn thư!")
 
 if __name__ == "__main__":
-    # Test Indexing
     import sys
+    import glob
     # path setup
     base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    file_target = os.path.join(base_path, "person3_structured.jsonl")
-    ingest_data(file_target)
+    
+    # Tìm toàn bộ các file jsonl vừa được gen ra trong thư mục raw_data
+    search_pattern = os.path.join(base_path, "raw_data", "*_structured.jsonl")
+    jsonl_files = glob.glob(search_pattern)
+    
+    if not jsonl_files:
+        print("Không tìm thấy file .jsonl nào trong raw_data/")
+    else:
+        for file_target in jsonl_files:
+            print(f"\\n--- Đang Index file: {os.path.basename(file_target)} ---")
+            ingest_data(file_target)
