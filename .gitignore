@@ -1,16 +1,14 @@
-# Bỏ qua toàn bộ tất cả file và thư mục trong dự án
+# 1. Chặn toàn bộ project
 /*
 
-# --- DANH SÁCH ĐƯỢC CHO PHÉP (WHITELIST) ---
-# Cho phép track thư mục src/ và nội dung bên trong
+# 2. Mở khóa các file/thư mục cần thiết (Whitelist)
 !/src/
-
-# Cho phép track file main.py
 !/main.py
-
-# Khuyến nghị: Nên giữ lại cả file .gitignore để push lên repo
 !/.gitignore
-
-# (Tuỳ chọn: Mở comment 2 dòng dưới nếu bạn muốn push cả requirements.txt và .env.example)
 #!/requirements.txt
-#!/.env.example
+
+# 3. Chốt chặn các file nhạy cảm (Phải để dưới cùng để đè lên Whitelist trên)
+.env
+src/.env
+**/__pycache__/
+*.pyc
