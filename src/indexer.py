@@ -20,7 +20,9 @@ def get_indexer():
         collection=collection,
         embedding=embeddings,
         index_name="vector_index", # Tên index đã được định nghĩa trên Atlas
-        relevance_score_fn="cosine"
+        relevance_score_fn="cosine",
+        text_key="text",
+        embedding_key="embedding"
     )
     return vectorStore, collection
 
@@ -39,39 +41,56 @@ def ingest_data(file_path: str):
             
             # Theo cấu trúc JSON thực tế của file pháp luật Việt Nam
             source_doc = data.get("source_doc", "")
-            title = data.get("title", "")
-            raw_text = data.get("text", "")
-            
-            # Khâu tối ưu cho Embedding: Gắn ngữ cảnh Luật/Tên Điều trước nội dung
-            page_content = f"Văn bản: {source_doc}\nPhần: {title}\nNội dung: {raw_text}"
-            
-            # Dùng toàn bộ data làm metadata để phục vụ Retrieval và Reranker sau này
-            metadata = data
-            
+            title     = data.get("title", "")
+            raw_text  = data.get("text", "")
+            article   = data.get("article", "")
+            clause    = data.get("clause", "") or ""
+            point     = data.get("point", "") or ""
+
+            # --- Tối ưu Embedding cho Legal RAG ---
+            # raw_text đã có header "[Điều X. ...]" → KHÔNG cần lặp title
+            # Chỉ cần thêm: (1) tên nghị định (user hay hỏi "Nghị định 168..."),
+            #               (2) vị trí Điều/Khoản/Điểm để phân biệt giữa các khoản
+            # Dùng natural language (không dùng "Văn bản:", "Phần:") → embedding tốt hơn
+            location = ", ".join(filter(None, [article, clause, point]))
+            page_content = (
+                f"{source_doc} — {location}:\n"
+                f"{raw_text}"
+            )
+
+            # Metadata: dùng toàn bộ data nhưng loại bỏ field 'text' để tránh nhân đôi
+            # (page_content đã chứa toàn bộ nội dung text rồi)
+            metadata = {k: v for k, v in data.items() if k != "text"}
+
             doc = Document(page_content=page_content, metadata=metadata)
             documents.append(doc)
             
     print(f"Bắt đầu index {len(documents)} văn bản vào MongoDB...")
     
+    
+    
     import time
-    batch_size = 50 # Giảm mạnh batch size vì có những đoạn document văn bản rất dài làm vượt 40k token trong TỪNG LÔ
+    batch_size = 200 # Tăng batch size để tối ưu tốc độ, vẫn an toàn với Rate Limit của OpenAI
     
     for i in range(0, len(documents), batch_size):
         batch = documents[i:i+batch_size]
         print(f"Đang xử lý lô văn bản từ {i} đến {i+len(batch)}...")
         vectorStore.add_documents(batch)
         
-        # Ngủ ngắn vì lô nhỏ - đảm bảo duy trì lượng nạp < 40k Request trong 1 phút
         if i + batch_size < len(documents):
-            print("Đợi 20 giây để làm mát Rate Limit (Vượt qua chu kỳ 1 phút của OpenAI)...")
-            time.sleep(20)
+            print("Đợi 5 giây để làm mát Rate Limit...")
+            time.sleep(5)
             
     print("Hoàn tất lập chỉ mục toàn thư!")
 
 if __name__ == "__main__":
-    # Test Indexing
     import sys
-    # path setup
-    base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    file_target = os.path.join(base_path, "person3_structured.jsonl")
-    ingest_data(file_target)
+
+    # Trỏ đến file đã được resolve cross-reference (bộ dữ liệu chất lượng cao)
+    file_target = r"E:\TTCS\person3_resolved.jsonl"
+
+    if not os.path.exists(file_target):
+        print(f"Không tìm thấy file: {file_target}")
+    else:
+        print(f"\\n--- Đang Index file: {os.path.basename(file_target)} ---")
+        ingest_data(file_target)
