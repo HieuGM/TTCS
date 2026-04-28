@@ -9,8 +9,6 @@
 #!/requirements.txt
 
 # 3. Chốt chặn các file nhạy cảm (Phải để dưới cùng để đè lên Whitelist trên)
-.env
-src/.env
 **/__pycache__/
 *.pyc
 **/.env
