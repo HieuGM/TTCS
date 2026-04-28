@@ -4,11 +4,15 @@ import logging
 from typing import List, Optional
 from langchain_core.documents import Document
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import PromptTemplate
 from langchain_community.retrievers import BM25Retriever
+from langchain_cohere import CohereRerank
 
 from .indexer import get_indexer
 from .config import GOOGLE_API_KEY
+
+# Đảm bảo bạn đã thêm COHERE_API_KEY vào file .env
+from dotenv import load_dotenv
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -77,14 +81,12 @@ def reciprocal_rank_fusion(doc_lists: List[List[Document]], c: int = 60) -> List
 
     for doc_list in doc_lists:
         for rank, doc in enumerate(doc_list):
-            # Use hash of content + metadata as unique ID to avoid collisions
             doc_id = hash(doc.page_content + str(doc.metadata))
             if doc_id not in fused_scores:
                 fused_scores[doc_id] = 0
                 doc_map[doc_id] = doc
             fused_scores[doc_id] += 1 / (rank + c)
 
-    # Sắp xếp theo RRF score giảm dần
     reranked = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
     return [doc_map[k] for k, v in reranked]
 
@@ -92,15 +94,12 @@ def ensemble_retrieve(query: str, vector_retriever, bm25_retriever) -> List[Docu
     """Gọi cả 2 retriever và trộn kết quả bằng RRF."""
     vector_docs = vector_retriever.invoke(query)
     bm25_docs = bm25_retriever.invoke(query) if bm25_retriever else []
-
-    # Kết hợp bằng RRF
     return reciprocal_rank_fusion([vector_docs, bm25_docs])
 
 # -------------------------------------------------------------
-# 2. Custom Multi-Query Generator
+# 2. Custom Multi-Query Generator (Vẫn dùng Gemini)
 # -------------------------------------------------------------
 def generate_queries(query: str, llm: ChatGoogleGenerativeAI) -> List[str]:
-    """Sử dụng LLM để sinh 3 câu hỏi biến thể."""
     prompt = f"""Bạn là một trợ lý pháp lý AI. Người dùng đang tìm kiếm thông tin về pháp luật Việt Nam.
 Nhiệm vụ của bạn là tạo ra đúng 3 câu hỏi biến thể khác nhau từ câu hỏi gốc của người dùng.
 Hãy sử dụng từ đồng nghĩa, cấu trúc lại câu hoặc mở rộng các khái niệm liên quan để giúp hệ thống tìm kiếm tài liệu tốt hơn.
@@ -112,104 +111,32 @@ Câu hỏi gốc: {query}"""
         res = llm.invoke(prompt)
         lines = res.content.strip().split('\n')
 
-        # Làm sạch kết quả trả về
         variations = []
         for line in lines:
             clean_line = line.strip('-*1234567890. ')
             if clean_line:
                 variations.append(clean_line)
 
-        # Đảm bảo có câu hỏi gốc trong danh sách
         if query not in variations:
             variations.insert(0, query)
 
-        return variations[:4]  # Câu gốc + 3 biến thể
-
+        return variations[:4]
     except Exception as e:
         logger.warning(f"LLM query generation failed: {e}. Using original query.")
         return [query]
 
 # -------------------------------------------------------------
-# 3. Gemini Reranker
-# -------------------------------------------------------------
-class GeminiReranker:
-    def __init__(self, top_n=5):
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=GOOGLE_API_KEY,
-            temperature=0
-        )
-        self.top_n = top_n
-        self.prompt = PromptTemplate.from_template(
-            """Bạn là một Thẩm phán AI chuyên chấm điểm mức độ liên quan của các tài liệu pháp lý đối với câu hỏi của người dùng.
-Câu hỏi của người dùng: {query}
-
-Dưới đây là danh sách các tài liệu được trích xuất. Hãy chấm điểm TỪNG tài liệu theo thang điểm cực kỳ KHẮT KHE sau đây:
-- 10 điểm: Tương thích hoàn hảo 100%. Phải thỏa mãn đúng HÀNH VI + đúng ĐỐI TƯỢNG (hỏi ô tô phải trả lời ô tô) + CÓ CHỨA thông tin trực tiếp để trả lời (ví dụ: mức tiền phạt cụ thể).
-- 7 điểm: Trúng hành vi và đối tượng, nhưng chỉ là điều luật chung chung, quy định định nghĩa, không chứa trực tiếp mức xử phạt hoặc câu trả lời cuối cùng.
-- 3 điểm: Có chứa từ khóa nhưng SAI đối tượng (ví dụ: người dùng hỏi 'ô tô' nhưng tài liệu nói về 'xe máy', 'xe đạp').
-- 0 điểm: Hoàn toàn không liên quan hoặc rác.
-
-{documents_text}
-
-Bạn PHẢI trả về kết quả dưới dạng một danh sách (mảng) số nguyên tương ứng với thứ tự tài liệu, KHÔNG giải thích gì thêm.
-Ví dụ nếu có 3 tài liệu: [10, 3, 0]
-KẾT QUẢ CỦA BẠN:"""
-        )
-
-    def compress_documents(self, documents: List[Document], query: str) -> List[Document]:
-        if not documents:
-            return documents
-
-        # Nối tất cả tài liệu thành 1 chuỗi để chấm điểm trong 1 lần gọi API (tránh Rate Limit)
-        docs_text = ""
-        for i, doc in enumerate(documents):
-            # Cắt ngắn mỗi tài liệu để tránh vượt quá token limit (~375 tokens)
-            content = doc.page_content[:1500].replace('\n', ' ')
-            docs_text += f"[Tài liệu {i+1}]: {content}\n"
-
-        input_prompt = self.prompt.format(query=query, documents_text=docs_text)
-
-        try:
-            response = self.llm.invoke(input_prompt)
-            import re
-            # Sử dụng re.DOTALL để quét được cả trường hợp mảng JSON có xuống dòng (\n)
-            match = re.search(r'\[(.*?)\]', response.content, re.DOTALL)
-            if match:
-                # Tìm tất cả các con số bên trong mảng
-                scores = [int(s) for s in re.findall(r'\d+', match.group(1))]
-            else:
-                logger.warning(f"Reranker: No score array found in response: {response.content}")
-                scores = []
-
-            for i, doc in enumerate(documents):
-                doc.metadata['relevance_score'] = scores[i] if i < len(scores) else 0
-
-        except Exception as e:
-            logger.error(f"Reranking error: {e}")
-            for doc in documents:
-                doc.metadata['relevance_score'] = 0
-
-        documents.sort(key=lambda x: x.metadata.get('relevance_score', 0), reverse=True)
-        return documents[:self.top_n]
-
-# -------------------------------------------------------------
-# 4. Pipeline Chính (Retrieve & Rerank)
+# 3. Pipeline Chính (Retrieve & Rerank)
 # -------------------------------------------------------------
 def retrieve_and_rerank(query: str, top_k: int = 20, top_n: int = 5) -> List[Document]:
-    """Pipeline chính: Multi-Query → Ensemble Retrieve → Rerank."""
-    # Input validation
     if not query or not query.strip():
-        logger.error("Empty query provided")
         return []
     if top_k < 1 or top_n < 1:
-        logger.error(f"Invalid params: top_k={top_k}, top_n={top_n}")
         return []
     if top_n > top_k:
-        logger.warning(f"top_n ({top_n}) > top_k ({top_k}), adjusting top_n to {top_k}")
         top_n = top_k
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GOOGLE_API_KEY, temperature=0.2)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=GOOGLE_API_KEY, temperature=0.2)
 
     print(f"\n========== [BƯỚC 1] TẠO MULTI-QUERY ==========")
     queries = generate_queries(query, llm)
@@ -224,10 +151,8 @@ def retrieve_and_rerank(query: str, top_k: int = 20, top_n: int = 5) -> List[Doc
     all_docs = []
     seen_hashes = set()
 
-    # Lặp qua từng câu hỏi biến thể để tìm kiếm
     for q in queries:
         docs = ensemble_retrieve(q, vector_retriever, bm25_retriever)
-        # Khử trùng lặp document bằng hash
         for doc in docs:
             doc_hash = hash(doc.page_content)
             if doc_hash not in seen_hashes:
@@ -236,22 +161,33 @@ def retrieve_and_rerank(query: str, top_k: int = 20, top_n: int = 5) -> List[Doc
 
     print(f"\nĐã gộp tổng cộng {len(all_docs)} tài liệu không trùng lặp từ tất cả câu hỏi.")
 
-    for i, doc in enumerate(all_docs[:3]):
-        print(f"\n[Raw Doc {i+1}]")
-        print(f"Nội dung: {doc.page_content[:200]}...")
+    print(f"\n... Đang chạy COHERE Reranker để chọn ra Top {top_n} tài liệu. Vui lòng đợi ...\n")
 
-    print(f"\n... Đang chạy Gemini Reranker để chọn ra Top {top_n} tài liệu. Vui lòng đợi ...\n")
+    # Sử dụng Cohere Rerank thay vì Gemini
+    # Model: rerank-multilingual-v3.0 hỗ trợ tiếng Việt cực mạnh
+    try:
+        cohere_api_key = os.getenv("COHERE_API_KEY")
+        if not cohere_api_key:
+            raise ValueError("Không tìm thấy COHERE_API_KEY trong môi trường!")
+            
+        reranker = CohereRerank(
+            cohere_api_key=cohere_api_key,
+            model="rerank-multilingual-v3.0",
+            top_n=top_n
+        )
+        final_docs = reranker.compress_documents(all_docs, query)
+    except Exception as e:
+        print(f"Lỗi Cohere Rerank: {e}")
+        print("-> Fallback: Trả về tài liệu gốc chưa rerank.")
+        final_docs = all_docs[:top_n]
 
-    # 3. Rerank bằng Gemini
-    reranker = GeminiReranker(top_n=top_n)
-    final_docs = reranker.compress_documents(all_docs, query)
-
-    print(f"\n========== [BƯỚC 3] TOP {top_n} TÀI LIỆU CUỐI CÙNG ==========")
+    print(f"\n========== [BƯỚC 3] TOP {top_n} TÀI LIỆU CUỐI CÙNG (COHERE) ==========")
     for i, doc in enumerate(final_docs):
-        score = doc.metadata.get('relevance_score', 'N/A')
-        print(f"\n[Reranked Doc {i+1}] | Điểm Gemini chấm: {score}/10")
+        # Điểm của Cohere trả về là dạng float từ 0 đến 1, nhân 10 để tương đồng với code cũ
+        raw_score = doc.metadata.get('relevance_score', 0)
+        formatted_score = round(raw_score * 10, 2)
+        print(f"\n[Reranked Doc {i+1}] | Điểm Cohere chấm: {formatted_score}/10")
         print(f"Nội dung: {doc.page_content[:250]}...")
-        # Lọc bỏ embedding và _id để log console nhìn sạch sẽ, không bị lag
         clean_meta = {k: v for k, v in doc.metadata.items() if k not in ['embedding', '_id']}
         print(f"Metadata: {clean_meta}")
     print("\n===========================================================\n")

@@ -5,6 +5,7 @@
 !/src/
 !/main.py
 !/.gitignore
+!/person3_resolved.jsonl
 #!/requirements.txt
 
 # 3. Chốt chặn các file nhạy cảm (Phải để dưới cùng để đè lên Whitelist trên)

@@ -3,35 +3,10 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_mongodb.chat_message_histories import MongoDBChatMessageHistory
 from .config import MONGODB_URI, DB_NAME, GOOGLE_API_KEY
-from .retriever import retrieve_and_rerank
+#from .retriever import retrieve_and_rerank
+from .retriever_cohere import retrieve_and_rerank
 
 # Định nghĩa hệ thống Prompt bao gồm CoT và Reflection
-# system_prompt_template = """Bạn là Chuyên gia Tư vấn Pháp lý Việt Nam độ chính xác tuyệt đối. Nhiệm vụ của bạn là giải đáp câu hỏi dựa trên lịch sử hội thoại và dữ liệu pháp luật được cung cấp.
-
-# CONTEXT PHÁP LÝ (Đã lọc):
-# {context}
-
-# YÊU CẦU DUY NHẤT VÀ BẮT BUỘC:
-# Bạn PHẢI mô phỏng lại quá trình phân tích pháp y vào thẻ <thinking> trước khi đưa ra câu trả lời cuối cùng.
-
-# <thinking>
-# 1. Chain of Thought (Suy luận pháp lý):
-# - Xác định yêu cầu chính của người dùng.
-# - Liên kết với các Điều khoản trong Context: Liệt kê Điều, Khoản, Tên văn bản.
-# - Trạng thái hiệu lực hiện tại là gì? Có văn bản nào hết hiệu lực không?
-# - Quy định chuyên ngành có ưu tiên quy định chung không?
-
-# 2. Reflection (Tự đánh giá độ tin cậy):
-# - Có thông tin nào mâu thuẫn với Hiến pháp/Luật Mẹ không?
-# - Nếu context không đề cập, bắt buộc phải trả lời: "Tài liệu hiện tại không đề cập". Không chế số hiệu, điều khoản.
-# </thinking>
-
-# CÂU TRẢ LỜI CỦA BẠN DÀNH CHO USER:
-# (Sau thẻ thinking, viết câu trả lời. Yêu cầu:
-# - Format markdown rõ ràng, xuống dòng rành mạch.
-# - Bắt buộc dẫn chiếu rõ [Điều X, Khoản Y, Tên Văn Bản].
-# - Cảnh báo In đậm nếu liên quan văn bản sắp/đã hết hiệu lực.)"""
-
 
 system_prompt_template = """Bạn là Trợ lý Pháp lý AI chuyên nghiệp, hỗ trợ tra cứu hệ thống văn bản pháp luật Việt Nam. 
 Bạn có nhiệm vụ giải đáp thắc mắc dựa trên các trích lục văn bản được cung cấp.
@@ -71,7 +46,7 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash", # Sử dụng pro cho khả năng phân tích luật phức tạp (Generation phase)
+    model="gemini-2.0-flash", # Sử dụng pro cho khả năng phân tích luật phức tạp (Generation phase)
     google_api_key=GOOGLE_API_KEY,
     temperature=0
 )
@@ -98,9 +73,9 @@ def format_context(documents):
     for doc in documents:
         # Chuyển đổi trạng thái hiệu lực sang tiếng Việt
         raw_status = doc.metadata.get("status", "current")
-        status_vn = "Đang có hiệu lực" if raw_status == "current" else ("Hết hiệu lực" if raw_status == "expired" else raw_status)
+
         
-        blocks.append(f"[Trạng thái hiệu lực: {status_vn}]\n{doc.page_content}")
+        blocks.append(f"[Trạng thái hiệu lực: {raw_status}]\n{doc.page_content}")
     return "\n\n---\n\n".join(blocks)
 
 def ask_legal_bot(session_id: str, question: str):
