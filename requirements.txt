@@ -1,0 +1,9 @@
+langchain
+langchain_community
+langchain-core
+langchain-openai
+langchain-mongodb
+pymongo
+python-dotenv
+FlagEmbedding
+transformers<5

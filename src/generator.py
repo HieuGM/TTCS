@@ -1,10 +1,9 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_mongodb.chat_message_histories import MongoDBChatMessageHistory
-from .config import MONGODB_URI, DB_NAME, GOOGLE_API_KEY
-#from .retriever import retrieve_and_rerank
-from .retriever_cohere import retrieve_and_rerank
+from .config import MONGODB_URI, DB_NAME, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from .retrieval_pipeline import retrieve_and_rerank
 
 # Định nghĩa hệ thống Prompt bao gồm CoT và Reflection
 
@@ -45,9 +44,10 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{question}"),
 ])
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash", # Sử dụng pro cho khả năng phân tích luật phức tạp (Generation phase)
-    google_api_key=GOOGLE_API_KEY,
+llm = ChatOpenAI(
+    model=DEEPSEEK_MODEL,
+    api_key=DEEPSEEK_API_KEY,
+    base_url=DEEPSEEK_BASE_URL,
     temperature=0
 )
 
@@ -80,8 +80,7 @@ def format_context(documents):
 
 def ask_legal_bot(session_id: str, question: str):
     print("...Đang truy xuất và đánh giá lại (Reranking) tài liệu...")
-    docs = retrieve_and_rerank(question, top_k=20, top_n=5)
-    #docs = retrieve_and_rerank(question)
+    docs = retrieve_and_rerank(question)
     context_str = format_context(docs)
     
     print("...Đang tư duy luật (CoT & Reflection)...")

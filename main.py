@@ -4,7 +4,7 @@ from src.generator import ask_legal_bot
 def main():
     print("="*50)
     print("HỆ THỐNG LEGAL RAG - PHÁP LUẬT VIỆT NAM (Beta)")
-    print("Mô hình nhúng: OpenAI | Tra cứu: hybrid + LLM-Rerank | Trả lời: Gemini")
+    print("Mô hình nhúng: OpenAI | Tra cứu: MongoDB hybrid + BGE/RRF | Trả lời: DeepSeek V4 Pro")
     print("Gõ 'quit', 'exit' hoặc 'q' để thoát.")
     print("="*50)
     
