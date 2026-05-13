@@ -7,7 +7,7 @@ from dotenv import dotenv_values
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PIPELINE_CONFIG_FILE = REPO_ROOT / "pipeline_config.env"
+DEFAULT_PIPELINE_CONFIG_FILE = REPO_ROOT / ".env"
 
 
 def _load_pipeline_values() -> Dict[str, str]:

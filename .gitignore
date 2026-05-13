@@ -13,7 +13,6 @@
 !/evaluate_reranked_retrieval.py
 !/colab_bge_rerank_eval.py
 !/colab_bge_rerank_eval.ipynb
-!/pipeline_config.env
 
 # 3. Chan ro cac file/thu muc khong commit
 /chunk/

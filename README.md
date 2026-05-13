@@ -19,8 +19,7 @@ Phan danh gia retrieval chi tinh metric tren chunk/document id, khong can sinh c
 - `main.py`: CLI de hoi dap.
 - `src/generator.py`: format context, goi retrieval pipeline va DeepSeek LLM.
 - `src/retrieval_pipeline.py`: hybrid retrieval, RRF, optional BGE rerank.
-- `src/pipeline_config.py`: doc cau hinh tu `pipeline_config.env`.
-- `pipeline_config.env`: file cau hinh pipeline co the sua truc tiep.
+- `src/pipeline_config.py`: doc cau hinh pipeline tu `.env`.
 - `evaluate_retrieval_export.py`: export candidate retrieval tu MongoDB cho toan bo ground truth.
 - `colab_bge_rerank_eval.py`: rerank candidates bang BGE va tinh retrieval metrics tren Colab/GPU.
 - `colab_bge_rerank_eval.ipynb`: notebook Colab toi thieu de chay script rerank/eval.
@@ -102,7 +101,7 @@ Pipeline BM25 chi dung Atlas Search `$search`, khong fallback sang MongoDB `$tex
 
 ## Cau Hinh Pipeline
 
-Sua truc tiep file `pipeline_config.env`:
+Sua truc tiep cac bien pipeline trong file `.env`:
 
 ```env
 ENABLE_QUERY_GENERATION=false
