@@ -13,9 +13,13 @@
 !/evaluate_reranked_retrieval.py
 !/colab_bge_rerank_eval.py
 !/colab_bge_rerank_eval.ipynb
+!/evaluate/
+!/evaluate/retrieval.py
+!/evaluate/metrics.py
 
 # 3. Chan ro cac file/thu muc khong commit
 /chunk/
+/evaluate/logs/
 /ground_truth/
 /grouth_truth/
 **/__pycache__/
