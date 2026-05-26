@@ -44,6 +44,11 @@ def _int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class RetrievalPipelineConfig:
     enable_query_generation: bool = _bool("ENABLE_QUERY_GENERATION", True)
+    enable_static_query_expansion: bool = _bool("ENABLE_STATIC_QUERY_EXPANSION", True)
+    query_expansion_file: str = _value(
+        "QUERY_EXPANSION_FILE",
+        str(REPO_ROOT / "evaluate" / "query_expansion_supplementary_queries.csv"),
+    )
     generated_query_count: int = _int("GENERATED_QUERY_COUNT", 3)
     rrf_top_k: int = _int("RRF_TOP_K", 100)
     rerank_top_n: int = _int("RERANK_TOP_N", 5)
@@ -65,6 +70,8 @@ class RetrievalPipelineConfig:
             enable_query_generation=(
                 self.enable_query_generation if enable_query_generation is None else enable_query_generation
             ),
+            enable_static_query_expansion=self.enable_static_query_expansion,
+            query_expansion_file=self.query_expansion_file,
             generated_query_count=self.generated_query_count,
             rrf_top_k=rrf_top_k or self.rrf_top_k,
             rerank_top_n=rerank_top_n or self.rerank_top_n,

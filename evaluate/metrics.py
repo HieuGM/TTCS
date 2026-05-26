@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GROUND_TRUTH = REPO_ROOT / "ground_truth" / "grounth_truth_record_id.csv"
-DEFAULT_INPUT = REPO_ROOT / "evaluate" / "logs" / "3" / "reranked_chunks.json"
+DEFAULT_INPUT = REPO_ROOT / "evaluate" / "logs" / "vietnamese_bi_encoder" / "10" / "reranked_chunks.json"
 DEFAULT_K_VALUES = [1, 3, 5, 10, 20]
 
 METRIC_NAMES = [

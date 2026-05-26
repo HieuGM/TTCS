@@ -1,5 +1,8 @@
+import csv
 import logging
+import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
@@ -13,6 +16,30 @@ from .pipeline_config import DEFAULT_RETRIEVAL_CONFIG, RetrievalPipelineConfig
 
 logger = logging.getLogger(__name__)
 _INDEXER_CACHE: Optional[Tuple[Any, Any]] = None
+_STATIC_QUERY_EXPANSION_CACHE: Dict[Path, Tuple[float, Dict[str, List[str]]]] = {}
+
+
+QUERY_NORMALIZATION_RULES: Dict[Tuple[str, ...], str] = {
+    ("vượt đèn đỏ", "vượi đèn", "vượt đèn tín hiệu"): (
+        "không chấp hành hiệu lệnh của đèn tín hiệu giao thông"
+    ),
+    
+    ('Xe máy') :('xe mô tô, xe gắn máy, xe hai bánh có động cơ'),
+    
+    ("chở quá số người", "chở quá tải người", "chở quá số chỗ ngồi"): (
+        "chở quá số người quy định"
+    ),
+    ("quá tải", "chở quá tải trọng", "chở quá trọng tải"): (
+        "chở quá tải trọng quy định"
+    ),
+    ("nồng độ cồn", "điều khiển phương tiện khi có nồng độ cồn", "uống rượu bia lái xe"): (
+        "điều khiển phương tiện giao thông khi trong máu hoặc hơi thở có nồng độ cồn vượt quá mức quy định"
+    ),
+    ("không đội mũ bảo hiểm", "không đội mũ bảo hiểm cho người ngồi trên xe máy", "không đội mũ bảo hiểm khi đi xe máy"): (
+        "không đội mũ bảo hiểm khi tham gia giao thông"
+    ),
+    
+}
 
 
 def _get_indexer_cached() -> Tuple[Any, Any]:
@@ -31,6 +58,104 @@ def _build_llm(temperature: float = 0.2) -> ChatOpenAI:
     )
 
 
+def normalize_query(query: str) -> str:
+    original = " ".join(str(query or "").split())
+    if not original:
+        return ""
+
+    replacements: List[Tuple[str, str]] = []
+    for source_terms, replacement in QUERY_NORMALIZATION_RULES.items():
+        if isinstance(source_terms, str):
+            source_terms = (source_terms,)
+        for source_term in source_terms:
+            source_term = str(source_term).strip()
+            if source_term:
+                replacements.append((source_term, replacement))
+
+    if not replacements:
+        return original
+
+    replacements.sort(key=lambda item: len(item[0]), reverse=True)
+    replacement_by_term = {
+        source_term.casefold(): replacement for source_term, replacement in replacements
+    }
+    pattern = re.compile(
+        "|".join(re.escape(source_term) for source_term, _ in replacements),
+        flags=re.IGNORECASE,
+    )
+
+    normalized = pattern.sub(
+        lambda match: replacement_by_term[match.group(0).casefold()],
+        original,
+    )
+
+    return " ".join(normalized.split())
+
+
+def _query_key(query: str) -> str:
+    return " ".join(str(query or "").split()).casefold()
+
+
+def _load_static_query_expansions(path_value: str) -> Dict[str, List[str]]:
+    if not path_value:
+        return {}
+
+    path = Path(path_value)
+    if not path.exists():
+        logger.warning("Static query expansion file does not exist: %s", path)
+        return {}
+
+    mtime = path.stat().st_mtime
+    cached = _STATIC_QUERY_EXPANSION_CACHE.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    expansions: Dict[str, List[str]] = {}
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            original = str(row.get("original_question") or "").strip()
+            if not original:
+                continue
+
+            variants = []
+            for index in range(1, 20):
+                value = str(row.get(f"supplement_query_{index}") or "").strip()
+                if value and value not in variants:
+                    variants.append(value)
+
+            if variants:
+                expansions[_query_key(original)] = variants
+
+    _STATIC_QUERY_EXPANSION_CACHE[path] = (mtime, expansions)
+    return expansions
+
+
+def _static_query_variants(
+    primary_query: str,
+    config: RetrievalPipelineConfig,
+    fallback_query: Optional[str] = None,
+) -> List[str]:
+    if not config.enable_static_query_expansion:
+        return []
+
+    expansions = _load_static_query_expansions(config.query_expansion_file)
+    variants = expansions.get(_query_key(primary_query), [])
+    if not variants and fallback_query:
+        variants = expansions.get(_query_key(fallback_query), [])
+    return variants[: config.generated_query_count]
+
+
+def _append_unique_query(queries: List[str], query: str) -> None:
+    cleaned = " ".join(str(query or "").split())
+    if not cleaned:
+        return
+
+    existing = {_query_key(item) for item in queries}
+    if _query_key(cleaned) not in existing:
+        queries.append(cleaned)
+
+
 def generate_query_variants(
     query: str,
     config: RetrievalPipelineConfig = DEFAULT_RETRIEVAL_CONFIG,
@@ -39,29 +164,54 @@ def generate_query_variants(
         return []
 
     original = query.strip()
-    if not config.enable_query_generation or config.generated_query_count <= 0:
-        return [original]
+    normalized = normalize_query(original) or original
+    queries = [normalized]
+    _append_unique_query(queries, original)
 
-    prompt = f"""Bạn là trợ lý tìm kiếm pháp luật Việt Nam.
-Tạo đúng {config.generated_query_count} câu hỏi đồng nghĩa hoặc diễn đạt lại từ câu hỏi gốc.
-Mục tiêu là bổ sung truy vấn cho hệ thống retrieval, không trả lời câu hỏi.
-Chỉ trả về mỗi câu trên một dòng, không đánh số, không giải thích.
+    if config.generated_query_count <= 0:
+        return queries
 
-Câu hỏi gốc: {original}"""
+    static_variants = _static_query_variants(normalized, config, fallback_query=original)
+    if static_variants:
+        for variant in static_variants:
+            _append_unique_query(queries, variant)
+        return queries
+
+    if not config.enable_query_generation:
+        return queries
+
+    prompt = f"""Bạn là bộ sinh truy vấn bổ sung cho hệ thống Legal RAG pháp luật Việt Nam.
+
+    Nhiệm vụ của bạn là phân tích câu hỏi gốc và tạo đúng {config.generated_query_count} truy vấn bổ sung giúp tìm được các điều khoản pháp luật liên quan trong cơ sở dữ liệu.
+
+    Mỗi truy vấn nên bổ sung một hướng tìm kiếm khác nhau, ưu tiên:
+    - tên hành vi vi phạm theo ngôn ngữ pháp lý chính thức;
+    - đối tượng hoặc phương tiện liên quan;
+    - căn cứ về mức phạt tiền;
+    - căn cứ về hình phạt bổ sung hoặc tước giấy phép;
+    - căn cứ về biện pháp khắc phục hậu quả;
+    - trường hợp đặc biệt nếu có trong câu hỏi như gây tai nạn, không có giấy phép, chở quá số người, quá tải, nồng độ cồn, vượt đèn đỏ.
+
+    Ràng buộc:
+    - Không tạo các câu đồng nghĩa đơn thuần.
+    - Không mở rộng sang lỗi vi phạm khác nếu câu hỏi gốc không gợi ý.
+    - Không trả lời câu hỏi.
+    - Không nêu nhận xét.
+    - Chỉ trả về đúng {config.generated_query_count} dòng, mỗi dòng là một truy vấn tìm kiếm hoàn chỉnh.
+
+    Câu hỏi gốc: {normalized}"""
 
     try:
         response = _build_llm().invoke(prompt)
-        variants = []
         for line in response.content.strip().splitlines():
             cleaned = line.strip().strip("-*0123456789. ")
-            if cleaned and cleaned != original and cleaned not in variants:
-                variants.append(cleaned)
-            if len(variants) >= config.generated_query_count:
+            _append_unique_query(queries, cleaned)
+            if len(queries) >= config.generated_query_count + 1:
                 break
-        return [original, *variants]
+        return queries
     except Exception as exc:
         logger.warning("Query generation failed, using original query only: %s", exc)
-        return [original]
+        return queries
 
 
 def document_id(doc: Document) -> str:

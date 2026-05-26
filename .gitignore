@@ -15,6 +15,7 @@
 !/colab_bge_rerank_eval.ipynb
 !/evaluate/
 !/evaluate/retrieval.py
+!/evaluate/retrieval_vietnamese_bi_encoder.py
 !/evaluate/metrics.py
 
 # 3. Chan ro cac file/thu muc khong commit
