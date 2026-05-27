@@ -4,6 +4,7 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_mongodb.chat_message_histories import MongoDBChatMessageHistory
 from .config import MONGODB_URI, DB_NAME, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from .retrieval_pipeline import retrieve_and_rerank
+from .router import SemanticRouter, QueryIntent
 
 # Định nghĩa hệ thống Prompt bao gồm CoT và Reflection
 
@@ -12,6 +13,9 @@ Bạn có nhiệm vụ giải đáp thắc mắc dựa trên các trích lục v
 
 CONTEXT PHÁP LÝ (Tổng hợp từ nhiều nguồn):
 {context}
+
+[LƯU Ý QUAN TRỌNG TỪ HỆ THỐNG]
+Nếu CONTEXT ghi là "HỘI THOẠI THƯỜNG NHẬT", đây là câu giao tiếp của người dùng. Hãy trả lời tự nhiên, thân thiện, ngắn gọn và BỎ QUA toàn bộ phần <thinking> cũng như Cấu trúc phản hồi bên dưới.
 
 <thinking>
 1. Phân tích Query: Người dùng đang hỏi về vấn đề gì? (Giao thông, Thuế, Hình sự...?)
@@ -50,6 +54,7 @@ llm = ChatOpenAI(
     base_url=DEEPSEEK_BASE_URL,
     temperature=0
 )
+query_router = SemanticRouter(llm=llm)
 
 chain = prompt | llm
 
@@ -71,22 +76,41 @@ chain_with_history = RunnableWithMessageHistory(
 def format_context(documents):
     blocks = []
     for doc in documents:
-        # Chuyển đổi trạng thái hiệu lực sang tiếng Việt
         raw_status = doc.metadata.get("status", "current")
 
-        
         blocks.append(f"[Trạng thái hiệu lực: {raw_status}]\n{doc.page_content}")
     return "\n\n---\n\n".join(blocks)
 
 def ask_legal_bot(session_id: str, question: str):
-    print("...Đang truy xuất và đánh giá lại (Reranking) tài liệu...")
-    docs = retrieve_and_rerank(question)
-    context_str = format_context(docs)
+    print("...Đang phân tích ý định câu hỏi (Semantic Routing)...")
+    intent = query_router.route(question)
     
-    print("...Đang tư duy luật (CoT & Reflection)...")
+    if intent == QueryIntent.CHITCHAT:
+        print("...[Router] Phát hiện hội thoại thường nhật (Bỏ qua RAG)...")
+        context_str = "HỘI THOẠI THƯỜNG NHẬT"
+        print("...Đang tư duy trả lời...")
+    else:
+        
+        print("...Đang truy xuất và đánh giá lại (Reranking) tài liệu...")
+        docs = retrieve_and_rerank(question)
+        print("\n🏆 === TOP 7 KẾT QUẢ TRẢ VỀ TỪ CƠ SỞ DỮ LIỆU ===")
+        for i, doc in enumerate(docs[:7]):
+            layer = doc.metadata.get("legal_layer", "N/A")
+            subj = doc.metadata.get("subjects", [])
+            tops = doc.metadata.get("topics", [])
+            preview = doc.page_content.replace("\n", " ")[:120] + "..."
+            print(f"[{i+1}] {layer.upper()} | Xe: {subj} | Chủ đề: {tops}")
+            print(f"    📝 {preview}")
+        print("================================================\n")
+        context_str = format_context(docs)
+        print("...Đang tư duy luật (CoT & Reflection)...")
+
     response = chain_with_history.invoke(
         {"question": question, "context": context_str},
         config={"configurable": {"session_id": session_id}}
     )
     
     return response.content
+
+
+

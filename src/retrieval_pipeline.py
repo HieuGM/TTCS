@@ -24,7 +24,7 @@ QUERY_NORMALIZATION_RULES: Dict[Tuple[str, ...], str] = {
         "không chấp hành hiệu lệnh của đèn tín hiệu giao thông"
     ),
     
-    ('Xe máy') :('xe mô tô, xe gắn máy, xe hai bánh có động cơ'),
+    ("Xe máy") :("xe mô tô, xe gắn máy, xe hai bánh có động cơ"),
     
     ("chở quá số người", "chở quá tải người", "chở quá số chỗ ngồi"): (
         "chở quá số người quy định"
@@ -249,9 +249,32 @@ def _to_document(record: Dict[str, Any]) -> Document:
     return Document(page_content=page_content, metadata=metadata)
 
 
-def vector_search(query: str, k: int) -> List[Document]:
+# def vector_search(query: str, k: int) -> List[Document]:
+#     vector_store, _ = _get_indexer_cached()
+#     return vector_store.as_retriever(search_kwargs={"k": k}).invoke(query)
+
+def vector_search(
+    query: str, 
+    k: int, 
+    filter_subjects: Optional[List[str]] = None, 
+    filter_topics: Optional[List[str]] = None
+) -> List[Document]:
     vector_store, _ = _get_indexer_cached()
-    return vector_store.as_retriever(search_kwargs={"k": k}).invoke(query)
+    
+    # ---- TẠO PRE-FILTER CHO MONGODB ----
+    pre_filter = {}
+    if filter_subjects:
+        # Quan trọng: Luôn tự động gắn thêm 'tat_ca' vào câu query để lấy cả luật chung
+        pre_filter["subjects"] = {"$in": filter_subjects + ["tat_ca"]}
+    if filter_topics:
+        pre_filter["topics"] = {"$in": filter_topics}
+
+    search_kwargs = {"k": k}
+    if pre_filter:
+        search_kwargs["pre_filter"] = pre_filter
+    # ------------------------------------
+
+    return vector_store.as_retriever(search_kwargs=search_kwargs).invoke(query)
 
 
 def atlas_text_search(
@@ -265,15 +288,42 @@ def atlas_text_search(
         field_path = [field.strip() for field in field_path.split(",") if field.strip()]
 
     pipeline = [
+        # {
+        #     "$search": {
+        #         "index": config.mongodb_text_search_index,
+        #         "text": {
+        #             "query": query,
+        #             "path": field_path,
+        #         },
+        #     }
+        # },
         {
             "$search": {
                 "index": config.mongodb_text_search_index,
-                "text": {
-                    "query": query,
-                    "path": field_path,
-                },
+                "compound": {
+                    "should": [
+                        {
+                            # 1. Điểm nền BM25 (Bag-of-words thông thường)
+                            "text": {
+                                "query": query,
+                                "path": field_path,
+                                "score": {"boost": {"value": 1.0}}
+                            }
+                        },
+                        {
+                            # 2. Điểm Proximity / Bigram (Các từ đứng gần nhau)
+                            "phrase": {
+                                "query": query,
+                                "path": field_path,
+                                "slop": 2,  # Cho phép các từ cách nhau tối đa 2 khoảng trắng (nếu bị chen ngang)
+                                "score": {"boost": {"value": 3.0}} # Thưởng điểm cực mạnh cho ngữ cảnh đúng
+                            }
+                        }
+                    ]
+                }
             }
         },
+
         {"$limit": k},
         {"$addFields": {"search_score": {"$meta": "searchScore"}}},
         {"$project": {"embedding": 0}},
@@ -358,6 +408,8 @@ def retrieve_rrf_candidates(
         rrf_fuse(ranked_sources, top_k=config.rrf_top_k, c=config.rrf_c),
         queries,
     )
+
+
 
 
 def bge_rerank(

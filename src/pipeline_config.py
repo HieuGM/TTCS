@@ -52,7 +52,7 @@ class RetrievalPipelineConfig:
     generated_query_count: int = _int("GENERATED_QUERY_COUNT", 3)
     rrf_top_k: int = _int("RRF_TOP_K", 100)
     rerank_top_n: int = _int("RERANK_TOP_N", 5)
-    mongodb_text_search_index: str = _value("MONGODB_TEXT_SEARCH_INDEX", "legal_text_index")
+    mongodb_text_search_index: str = _value("MONGODB_TEXT_SEARCH_INDEX", "default")
     mongodb_text_search_field: str = _value("MONGODB_TEXT_SEARCH_FIELD", "text")
     bge_reranker_model: str = _value("BGE_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
     enable_local_bge_rerank: bool = _bool("ENABLE_LOCAL_BGE_RERANK", False)
