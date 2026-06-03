@@ -412,6 +412,32 @@ def retrieve_rrf_candidates(
 
 
 
+_RERANKER_CACHE: Optional[Any] = None
+_RERANKER_MODEL_NAME: Optional[str] = None
+
+
+def _get_reranker(model_name: str, use_fp16: bool) -> Any:
+    """Singleton FlagReranker — chỉ load model 1 lần duy nhất."""
+    global _RERANKER_CACHE, _RERANKER_MODEL_NAME
+    if _RERANKER_CACHE is None or _RERANKER_MODEL_NAME != model_name:
+        try:
+            from FlagEmbedding import FlagReranker
+        except ImportError as exc:
+            raise RuntimeError(
+                "FlagEmbedding is required for local BGE rerank. "
+                "Install dependencies or set ENABLE_LOCAL_BGE_RERANK=False."
+            ) from exc
+
+        import time
+        logger.info("Đang tải BGE Reranker model: %s (lần đầu tiên)...", model_name)
+        start = time.perf_counter()
+        _RERANKER_CACHE = FlagReranker(model_name, use_fp16=use_fp16)
+        elapsed = time.perf_counter() - start
+        logger.info("BGE Reranker đã sẵn sàng (%.1fs). Các lần sau sẽ dùng lại model này.", elapsed)
+        _RERANKER_MODEL_NAME = model_name
+    return _RERANKER_CACHE
+
+
 def bge_rerank(
     query: str,
     docs: Sequence[Document],
@@ -420,17 +446,10 @@ def bge_rerank(
     if not docs:
         return []
 
-    try:
-        from FlagEmbedding import FlagReranker
-    except ImportError as exc:
-        raise RuntimeError(
-            "FlagEmbedding is required for local BGE rerank. "
-            "Install dependencies or set ENABLE_LOCAL_BGE_RERANK=False."
-        ) from exc
+    reranker = _get_reranker(config.bge_reranker_model, config.bge_use_fp16)
 
-    reranker = FlagReranker(config.bge_reranker_model, use_fp16=config.bge_use_fp16)
     pairs = [[query, doc.page_content] for doc in docs]
-    scores = reranker.compute_score(pairs, normalize=True)
+    scores = reranker.compute_score(pairs, normalize=True, batch_size=256)
     if not isinstance(scores, list):
         scores = [scores]
 
