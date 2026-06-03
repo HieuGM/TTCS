@@ -41,6 +41,14 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _float(name: str, default: float) -> float:
+    raw = _value(name, str(default))
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class RetrievalPipelineConfig:
     enable_query_generation: bool = _bool("ENABLE_QUERY_GENERATION", True)
@@ -85,3 +93,16 @@ class RetrievalPipelineConfig:
 
 
 DEFAULT_RETRIEVAL_CONFIG = RetrievalPipelineConfig()
+
+
+@dataclass(frozen=True)
+class CacheConfig:
+    """Cấu hình cho Semantic Cache, đọc từ .env"""
+    enable_semantic_cache: bool = _bool("ENABLE_SEMANTIC_CACHE", True)
+    cache_similarity_threshold: float = _float("CACHE_SIMILARITY_THRESHOLD", 0.92)
+    cache_ttl_hours: int = _int("CACHE_TTL_HOURS", 168)
+    cache_max_size: int = _int("CACHE_MAX_SIZE", 500)
+    cache_collection_name: str = _value("CACHE_COLLECTION_NAME", "semantic_cache")
+
+
+DEFAULT_CACHE_CONFIG = CacheConfig()

@@ -5,6 +5,8 @@ from langchain_mongodb.chat_message_histories import MongoDBChatMessageHistory
 from .config import MONGODB_URI, DB_NAME, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from .retrieval_pipeline import retrieve_and_rerank
 from .router import SemanticRouter, QueryIntent
+from .semantic_cache import SemanticCache
+from .pipeline_config import DEFAULT_CACHE_CONFIG
 
 # Định nghĩa hệ thống Prompt bao gồm CoT và Reflection
 
@@ -73,6 +75,26 @@ chain_with_history = RunnableWithMessageHistory(
     history_messages_key="history",
 )
 
+# ── Semantic Cache Singleton (lazy init) ──────────────────────
+
+_semantic_cache_instance = None
+
+def get_semantic_cache() -> SemanticCache:
+    """Lấy hoặc khởi tạo Semantic Cache singleton."""
+    global _semantic_cache_instance
+    if _semantic_cache_instance is None:
+        cfg = DEFAULT_CACHE_CONFIG
+        _semantic_cache_instance = SemanticCache(
+            similarity_threshold=cfg.cache_similarity_threshold,
+            ttl_hours=cfg.cache_ttl_hours,
+            max_size=cfg.cache_max_size,
+            collection_name=cfg.cache_collection_name,
+            enabled=cfg.enable_semantic_cache,
+        )
+    return _semantic_cache_instance
+
+# ── Helpers ───────────────────────────────────────────────────
+
 def format_context(documents):
     blocks = []
     for doc in documents:
@@ -90,7 +112,20 @@ def ask_legal_bot(session_id: str, question: str):
         context_str = "HỘI THOẠI THƯỜNG NHẬT"
         print("...Đang tư duy trả lời...")
     else:
-        
+        # ── SEMANTIC CACHE: Kiểm tra cache trước khi chạy RAG ──
+        cache = get_semantic_cache()
+        if cache.enabled:
+            print("...Đang kiểm tra Semantic Cache...")
+            cached_response = cache.lookup(question)
+            if cached_response is not None:
+                cache_stats = cache.stats()
+                print(f"\n⚡ CACHE HIT — Trả lời từ Semantic Cache!")
+                print(f"   📊 Cache: {cache_stats['memory_entries']} entries | "
+                      f"Tổng hits: {cache_stats['total_hits']} | "
+                      f"Threshold: {cache_stats['similarity_threshold']}")
+                return cached_response
+
+        # ── Cache MISS → Chạy full RAG pipeline ──
         print("...Đang truy xuất và đánh giá lại (Reranking) tài liệu...")
         docs = retrieve_and_rerank(question)
         print("\n🏆 === TOP 7 KẾT QUẢ TRẢ VỀ TỪ CƠ SỞ DỮ LIỆU ===")
@@ -110,7 +145,17 @@ def ask_legal_bot(session_id: str, question: str):
         config={"configurable": {"session_id": session_id}}
     )
     
-    return response.content
+    result = response.content
+
+    # ── SEMANTIC CACHE: Lưu kết quả RAG vào cache ──
+    if intent != QueryIntent.CHITCHAT:
+        cache = get_semantic_cache()
+        if cache.enabled:
+            cache.store(question, result)
+            print("💾 Đã lưu câu trả lời vào Semantic Cache.")
+
+    return result
+
 
 
 

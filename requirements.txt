@@ -9,3 +9,4 @@ FlagEmbedding
 transformers<5
 streamlit
 sentence-transformers
+numpy
