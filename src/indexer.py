@@ -1,10 +1,16 @@
 import json
+import warnings
 from langchain_core.documents import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_mongodb import MongoDBAtlasVectorSearch
 from pymongo import MongoClient
 import os
 from .config import MONGODB_URI, DB_NAME, COLLECTION_NAME
+from langchain_community.embeddings import HuggingFaceEmbeddings
+
+try:
+    from langchain_core._api.deprecation import LangChainDeprecationWarning
+except ImportError:
+    LangChainDeprecationWarning = Warning
 
 
 DEFAULT_EMBEDDING_MODEL = "Quockhanh05/Vietnam_legal_embeddings"
@@ -15,9 +21,10 @@ def get_indexer():
     db = client[DB_NAME]
     collection = db[COLLECTION_NAME]
     
-    embeddings = HuggingFaceEmbeddings(
-        model_name=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
-    )
+    model_name = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
+        embeddings = HuggingFaceEmbeddings(model_name=model_name)
     
     vectorStore = MongoDBAtlasVectorSearch(
         collection=collection,

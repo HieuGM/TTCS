@@ -1,4 +1,37 @@
+import builtins
+from datetime import datetime
 import uuid
+
+
+_ORIGINAL_PRINT = builtins.print
+
+
+def _timestamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _timestamped_print(*args, sep=" ", end="\n", file=None, flush=False):
+    message = sep.join(str(arg) for arg in args)
+    prefix = f"[{_timestamp()}] "
+
+    if not message:
+        _ORIGINAL_PRINT(prefix.rstrip(), end=end, file=file, flush=flush)
+        return
+
+    leading_breaks = ""
+    while message.startswith(("\n", "\r")):
+        leading_breaks += message[0]
+        message = message[1:]
+
+    if not message:
+        _ORIGINAL_PRINT(leading_breaks + prefix.rstrip(), end=end, file=file, flush=flush)
+        return
+
+    _ORIGINAL_PRINT(f"{leading_breaks}{prefix}{message}", end=end, file=file, flush=flush)
+
+
+builtins.print = _timestamped_print
+
 from src.generator import ask_legal_bot, get_semantic_cache
 from src.pipeline_config import DEFAULT_CACHE_CONFIG
 
@@ -29,7 +62,7 @@ def main():
     while True:
         try:
             print("\n" + "-"*50)
-            user_input = input("👤 Bạn: ")
+            user_input = input(f"[{_timestamp()}] 👤 Bạn: ")
             
             if user_input.lower().strip() in ["quit", "exit", "q"]:
                 print("👋 Tạm biệt!")
@@ -61,8 +94,7 @@ def main():
                 continue
                 
             response = ask_legal_bot(session_id, user_input)
-            print("\n🤖 Trợ lý Pháp lý:\n")
-            print(response)
+            print(f"\n🤖 Trợ lý Pháp lý:\n\n{response}")
         
         except KeyboardInterrupt:
             print("\n👋 Tạm biệt!")

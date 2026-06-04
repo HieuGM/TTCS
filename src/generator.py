@@ -124,19 +124,23 @@ def ask_legal_bot(session_id: str, question: str):
                       f"Tổng hits: {cache_stats['total_hits']} | "
                       f"Threshold: {cache_stats['similarity_threshold']}")
                 return cached_response
+            print("⚡ CACHE MISS — Không có câu trả lời phù hợp trong Semantic Cache.")
+        else:
+            print("⚡ Semantic Cache: TẮT — Bỏ qua kiểm tra cache.")
 
         # ── Cache MISS → Chạy full RAG pipeline ──
         print("...Đang truy xuất và đánh giá lại (Reranking) tài liệu...")
         docs = retrieve_and_rerank(question)
-        print("\n🏆 === TOP 7 KẾT QUẢ TRẢ VỀ TỪ CƠ SỞ DỮ LIỆU ===")
+        result_lines = ["\n🏆 === TOP 7 KẾT QUẢ TRẢ VỀ TỪ CƠ SỞ DỮ LIỆU ==="]
         for i, doc in enumerate(docs[:7]):
             layer = doc.metadata.get("legal_layer", "N/A")
             subj = doc.metadata.get("subjects", [])
             tops = doc.metadata.get("topics", [])
             preview = doc.page_content.replace("\n", " ")[:120] + "..."
-            print(f"[{i+1}] {layer.upper()} | Xe: {subj} | Chủ đề: {tops}")
-            print(f"    📝 {preview}")
-        print("================================================\n")
+            result_lines.append(f"[{i+1}] {layer.upper()} | Xe: {subj} | Chủ đề: {tops}")
+            result_lines.append(f"    📝 {preview}")
+        result_lines.append("================================================\n")
+        print("\n".join(result_lines))
         context_str = format_context(docs)
         print("...Đang tư duy luật (CoT & Reflection)...")
 

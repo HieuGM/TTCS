@@ -14,16 +14,22 @@ Cùng embedding model với project: Quockhanh05/Vietnam_legal_embeddings
 
 import logging
 import os
+import warnings
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from pymongo import MongoClient, DESCENDING
 from pymongo.collection import Collection
 
 from .config import MONGODB_URI, DB_NAME
+from langchain_community.embeddings import HuggingFaceEmbeddings
+
+try:
+    from langchain_core._api.deprecation import LangChainDeprecationWarning
+except ImportError:
+    LangChainDeprecationWarning = Warning
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +46,10 @@ def _get_embedding_model() -> HuggingFaceEmbeddings:
     if _EMBEDDING_MODEL_CACHE is None:
         model_name = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
         logger.info("Đang tải embedding model cho Semantic Cache: %s", model_name)
-        _EMBEDDING_MODEL_CACHE = HuggingFaceEmbeddings(model_name=model_name)
+        print(f"Đang load model: {model_name}")
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
+            _EMBEDDING_MODEL_CACHE = HuggingFaceEmbeddings(model_name=model_name)
     return _EMBEDDING_MODEL_CACHE
 
 
