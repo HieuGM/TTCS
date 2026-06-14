@@ -10,3 +10,8 @@ transformers<5
 streamlit
 sentence-transformers
 numpy
+requests
+fastapi
+uvicorn
+nest_asyncio
+python-multipart

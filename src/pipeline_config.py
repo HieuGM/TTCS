@@ -49,6 +49,21 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+def _normalize_remote_base_url(url: str) -> str:
+    cleaned = str(url or "").strip().rstrip("/")
+    for endpoint in ("/rerank-batch", "/rerank-file", "/rerank"):
+        if cleaned.endswith(endpoint):
+            return cleaned[: -len(endpoint)].rstrip("/")
+    return cleaned
+
+
+def _remote_endpoint_url(endpoint_var: str, endpoint: str) -> str:
+    base_url = _normalize_remote_base_url(_value("REMOTE_BGE_RERANK_BASE_URL", ""))
+    if base_url:
+        return f"{base_url}{endpoint}"
+    return _value(endpoint_var, "").strip()
+
+
 @dataclass(frozen=True)
 class RetrievalPipelineConfig:
     enable_query_generation: bool = _bool("ENABLE_QUERY_GENERATION", True)
@@ -63,6 +78,13 @@ class RetrievalPipelineConfig:
     mongodb_text_search_index: str = _value("MONGODB_TEXT_SEARCH_INDEX", "default")
     mongodb_text_search_field: str = _value("MONGODB_TEXT_SEARCH_FIELD", "text")
     bge_reranker_model: str = _value("BGE_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+    enable_remote_bge_rerank: bool = _bool("ENABLE_REMOTE_BGE_RERANK", False)
+    remote_bge_rerank_base_url: str = _normalize_remote_base_url(
+        _value("REMOTE_BGE_RERANK_BASE_URL", "")
+    )
+    remote_bge_rerank_url: str = _remote_endpoint_url("REMOTE_BGE_RERANK_URL", "/rerank")
+    remote_bge_rerank_api_key: str = _value("REMOTE_BGE_RERANK_API_KEY", "")
+    remote_bge_rerank_timeout_seconds: float = _float("REMOTE_BGE_RERANK_TIMEOUT_SECONDS", 60.0)
     enable_local_bge_rerank: bool = _bool("ENABLE_LOCAL_BGE_RERANK", False)
     bge_use_fp16: bool = _bool("BGE_USE_FP16", False)
     rrf_c: int = _int("RRF_C", 60)
@@ -86,6 +108,11 @@ class RetrievalPipelineConfig:
             mongodb_text_search_index=self.mongodb_text_search_index,
             mongodb_text_search_field=self.mongodb_text_search_field,
             bge_reranker_model=self.bge_reranker_model,
+            enable_remote_bge_rerank=self.enable_remote_bge_rerank,
+            remote_bge_rerank_base_url=self.remote_bge_rerank_base_url,
+            remote_bge_rerank_url=self.remote_bge_rerank_url,
+            remote_bge_rerank_api_key=self.remote_bge_rerank_api_key,
+            remote_bge_rerank_timeout_seconds=self.remote_bge_rerank_timeout_seconds,
             enable_local_bge_rerank=self.enable_local_bge_rerank,
             bge_use_fp16=self.bge_use_fp16,
             rrf_c=self.rrf_c,

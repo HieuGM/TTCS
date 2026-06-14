@@ -8,6 +8,7 @@
 !/person3_resolved.jsonl
 !/requirements.txt
 !/README.md
+!/colab_remote_rerank_server.py
 !/evaluate_retrieval.py
 !/evaluate_retrieval_export.py
 !/evaluate_reranked_retrieval.py

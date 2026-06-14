@@ -22,10 +22,11 @@ if str(REPO_ROOT) not in sys.path:
 # so this script is named retrieval_vietnamese_bi_encoder.py.
 EMBEDDING_MODEL = "bkai-foundation-models/vietnamese-bi-encoder"
 DB_NAME = "legal"
-COLLECTION_NAME = "legal_vietnamese_bi_encoder"
+COLLECTION_NAME = "legal_v2"
 VECTOR_SEARCH_INDEX = "vector_index"
 TEXT_SEARCH_INDEX = "default"
 TEXT_SEARCH_FIELD = "text"
+DEFAULT_TOP_K = 100
 
 os.environ["DB_NAME"] = DB_NAME
 os.environ["COLLECTION_NAME"] = COLLECTION_NAME
@@ -40,8 +41,8 @@ from src.pipeline_config import DEFAULT_RETRIEVAL_CONFIG
 from src.retrieval_pipeline import _get_indexer_cached, retrieve_rrf_candidates
 
 
-DEFAULT_GROUND_TRUTH = REPO_ROOT / "ground_truth" / "grounth_truth_record_id.csv"
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "evaluate" / "logs" / "vietnamese_bi_encoder"
+DEFAULT_GROUND_TRUTH = REPO_ROOT / "ground_truth" / "ground_truth_by_vehicle.csv"
+DEFAULT_OUTPUT_ROOT = REPO_ROOT / "evaluate" / "logs" / "vietnamese_bi_encoder_by_vehicle"
 
 
 def _canonical_column(value: str) -> str:
@@ -78,6 +79,10 @@ def _split_groundtruth_ids(value: str) -> List[str]:
         for item in str(value or "").split(",")
         if item and item.strip()
     ]
+
+
+def _normalize_record_id(value: Any) -> str:
+    return str(value or "").strip().casefold()
 
 
 def load_questions(path: Path) -> List[Dict[str, str]]:
@@ -143,30 +148,78 @@ def _record_id_from_metadata(metadata: Dict[str, Any]) -> str:
     return ""
 
 
-def chunk_payload(doc: Any) -> Dict[str, Any]:
+def _source_rank_slots(
+    source_ranks: Any,
+    *,
+    query_count: int,
+    source_suffix: str,
+) -> str:
+    ranks: List[Any] = [None] * query_count
+    if not isinstance(source_ranks, list):
+        return "-".join("null" for _ in ranks)
+
+    for item in source_ranks:
+        if not isinstance(item, dict):
+            continue
+
+        source = str(item.get("source") or "")
+        rank = item.get("rank")
+        if rank is None or not source.endswith(source_suffix):
+            continue
+
+        source_prefix = source[: -len(source_suffix)]
+        if not source_prefix.startswith("q"):
+            continue
+
+        try:
+            query_index = int(source_prefix[1:])
+        except ValueError:
+            continue
+
+        if 0 <= query_index < query_count:
+            ranks[query_index] = rank
+
+    return "-".join("null" if rank is None else str(rank) for rank in ranks)
+
+
+def chunk_payload(
+    doc: Any,
+    query_count: int,
+    groundtruth_ids: Sequence[str],
+) -> Dict[str, Any]:
     metadata = dict(getattr(doc, "metadata", {}) or {})
     source_ranks = metadata.get("source_ranks", [])
-    vector_ranks = [
-        str(item.get("rank"))
-        for item in source_ranks
-        if str(item.get("source", "")).endswith("_vector") and item.get("rank") is not None
-    ]
-    bm25_ranks = [
-        str(item.get("rank"))
-        for item in source_ranks
-        if str(item.get("source", "")).endswith("_text") and item.get("rank") is not None
-    ]
+    record_id = _record_id_from_metadata(metadata)
+    groundtruth_id_set = {_normalize_record_id(item) for item in groundtruth_ids}
     return {
-        "record_id": _record_id_from_metadata(metadata),
+        "record_id": record_id,
+        "source_doc": metadata.get("source_doc", ""),
+        "article": metadata.get("article", ""),
+        "clause": metadata.get("clause", ""),
+        "point": metadata.get("point", ""),
+        "title": metadata.get("title", ""),
+        "subjects": metadata.get("subjects", []),
+        "topics": metadata.get("topics", []),
+        "is_groundtruth": _normalize_record_id(record_id) in groundtruth_id_set,
         "text": str(getattr(doc, "page_content", "") or ""),
         "rrf_rank": metadata.get("rrf_rank"),
         "rrf_score": metadata.get("rrf_score"),
-        "vector_rank": "-".join(vector_ranks),
-        "bm25_rank": "-".join(bm25_ranks),
+        "rerank_score": metadata.get("rerank_score") or metadata.get("bge_score"),
+        "rerank_rank": metadata.get("rerank_rank") or metadata.get("bge_rank"),
+        "vector_rank": _source_rank_slots(
+            source_ranks,
+            query_count=query_count,
+            source_suffix="_vector",
+        ),
+        "bm25_rank": _source_rank_slots(
+            source_ranks,
+            query_count=query_count,
+            source_suffix="_text",
+        ),
     }
 
 
-def record_payload(record: Dict[str, Any]) -> Dict[str, str]:
+def record_payload(record: Dict[str, Any]) -> Dict[str, Any]:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     record_id = ""
     for key in ("record_id", "_id", "id", "doc_id", "chunk_id"):
@@ -186,14 +239,19 @@ def record_payload(record: Dict[str, Any]) -> Dict[str, str]:
 
     return {
         "record_id": record_id,
+        "source_doc": str(source_doc),
+        "article": str(article),
+        "clause": str(clause),
+        "point": str(point),
+        "title": str(record.get("title") or metadata.get("title", "")),
         "text": str(text),
     }
 
 
 def load_groundtruth_chunks(
     groundtruth_ids: Sequence[str],
-    retrieved_chunks: Sequence[Dict[str, str]],
-) -> List[Dict[str, str]]:
+    retrieved_chunks: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     if not groundtruth_ids:
         return []
 
@@ -228,10 +286,12 @@ def load_groundtruth_chunks(
             if payload["record_id"]:
                 fetched_by_id[payload["record_id"]] = payload
 
-    output = []
+    output: List[Dict[str, Any]] = []
     for record_id in groundtruth_ids:
         chunk = retrieved_by_id.get(record_id) or fetched_by_id.get(record_id)
-        output.append(chunk or {"record_id": record_id, "text": ""})
+        payload = dict(chunk) if chunk else {"record_id": record_id, "text": ""}
+        payload["is_groundtruth"] = True
+        output.append(payload)
     return output
 
 
@@ -240,6 +300,7 @@ def export_retrieved_chunks(
     output_root: Path,
     *,
     limit: int = 0,
+    top_k: int = DEFAULT_TOP_K,
 ) -> Path:
     questions = load_questions(ground_truth_path)
     if limit > 0:
@@ -251,16 +312,24 @@ def export_retrieved_chunks(
 
     for index, item in enumerate(questions, start=1):
         print(f"[{index}/{len(questions)}] retrieving row_id={item['id']}")
+        effective_config = DEFAULT_RETRIEVAL_CONFIG.with_overrides(
+            rrf_top_k=top_k,
+            rerank_top_n=top_k,
+        )
         docs, generated_queries = retrieve_rrf_candidates(
             item["question"],
-            DEFAULT_RETRIEVAL_CONFIG,
+            effective_config,
         )
-        chunks = [chunk_payload(doc) for doc in docs]
         groundtruth_ids = _split_groundtruth_ids(item.get("groundtruth", ""))
+        chunks = [
+            chunk_payload(doc, len(generated_queries), groundtruth_ids)
+            for doc in docs
+        ]
         records.append(
             {
                 "id": item["id"],
                 "question": item["question"],
+                "candidate_top_k": top_k,
                 "groundtruth_ids": groundtruth_ids,
                 "groundtruth_chunks": load_groundtruth_chunks(groundtruth_ids, chunks),
                 "generated_queries": generated_queries,
@@ -281,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ground-truth", type=Path, default=DEFAULT_GROUND_TRUTH)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--limit", type=int, default=0, help="Debug only; 0 means all rows.")
+    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K, help="RRF candidate count per question.")
     return parser
 
 
@@ -296,6 +366,7 @@ def main() -> int:
         _resolve_repo_path(args.ground_truth),
         _resolve_repo_path(args.output_root),
         limit=args.limit,
+        top_k=args.top_k,
     )
     print(f"Wrote: {output_path}")
     return 0

@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import requests
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
 from pymongo.errors import OperationFailure, PyMongoError
@@ -463,6 +464,86 @@ def bge_rerank(
     return scored_docs[: config.rerank_top_n]
 
 
+def remote_bge_rerank(
+    query: str,
+    docs: Sequence[Document],
+    config: RetrievalPipelineConfig = DEFAULT_RETRIEVAL_CONFIG,
+) -> List[Document]:
+    if not docs:
+        return []
+
+    if not config.remote_bge_rerank_url:
+        raise RuntimeError("REMOTE_BGE_RERANK_URL is empty.")
+
+    headers = {"Content-Type": "application/json"}
+    if config.remote_bge_rerank_api_key:
+        headers["X-API-Key"] = config.remote_bge_rerank_api_key
+
+    payload = {
+        "query": query,
+        "documents": [
+            {
+                "index": index,
+                "id": document_id(doc),
+                "text": doc.page_content,
+            }
+            for index, doc in enumerate(docs)
+        ],
+        "top_n": config.rerank_top_n,
+    }
+
+    response = requests.post(
+        config.remote_bge_rerank_url,
+        headers=headers,
+        json=payload,
+        timeout=config.remote_bge_rerank_timeout_seconds,
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    results = data.get("results")
+    if not isinstance(results, list):
+        raise RuntimeError("Remote rerank response must contain a 'results' list.")
+
+    scored_docs: List[Document] = []
+    used_indexes = set()
+    for fallback_rank, item in enumerate(results, start=1):
+        if not isinstance(item, dict):
+            continue
+
+        try:
+            index = int(item["index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        if index < 0 or index >= len(docs) or index in used_indexes:
+            continue
+
+        try:
+            score = float(item.get("score", 0.0))
+        except (TypeError, ValueError):
+            score = 0.0
+
+        try:
+            rank = int(item.get("rank", fallback_rank))
+        except (TypeError, ValueError):
+            rank = fallback_rank
+
+        used_indexes.add(index)
+        doc = docs[index]
+        metadata = dict(doc.metadata or {})
+        metadata["bge_score"] = score
+        metadata["bge_rank"] = rank
+        metadata["rerank_source"] = "remote_colab"
+        scored_docs.append(Document(page_content=doc.page_content, metadata=metadata))
+
+    if not scored_docs:
+        raise RuntimeError("Remote rerank returned no usable document scores.")
+
+    scored_docs.sort(key=lambda doc: doc.metadata.get("bge_score", 0.0), reverse=True)
+    return scored_docs[: config.rerank_top_n]
+
+
 def retrieve_and_rerank(
     query: str,
     top_k: Optional[int] = None,
@@ -478,13 +559,36 @@ def retrieve_and_rerank(
     logger.info("Expanded queries: %s", queries)
     logger.info("RRF candidates: %s", len(candidates))
 
+    if effective_config.enable_remote_bge_rerank:
+        try:
+            print("...Đang rerank bằng Colab T4 Remote BGE...")
+            reranked_docs = remote_bge_rerank(query, candidates, effective_config)
+            top_score = reranked_docs[0].metadata.get("bge_score") if reranked_docs else None
+            if top_score is None:
+                print(f"✅ Remote BGE rerank thành công từ Colab T4: {len(reranked_docs)} chunks.")
+            else:
+                print(
+                    f"✅ Remote BGE rerank thành công từ Colab T4: "
+                    f"{len(reranked_docs)} chunks | top_score={float(top_score):.4f}"
+                )
+            return reranked_docs
+        except Exception as exc:
+            logger.warning("Remote BGE rerank failed: %s", exc)
+            print(f"⚠️ Remote BGE rerank lỗi, chuyển fallback: {exc}")
+
     if effective_config.enable_local_bge_rerank:
-        return bge_rerank(query, candidates, effective_config)
+        try:
+            print("...Đang rerank bằng Local BGE...")
+            return bge_rerank(query, candidates, effective_config)
+        except Exception as exc:
+            logger.warning("Local BGE rerank failed: %s", exc)
+            print(f"⚠️ Local BGE rerank lỗi, dùng kết quả RRF: {exc}")
 
     logger.warning(
-        "Local BGE rerank is disabled. Returning top %s chunks after RRF.",
+        "BGE rerank is disabled or unavailable. Returning top %s chunks after RRF.",
         effective_config.rerank_top_n,
     )
+    print("⚠️ BGE rerank không khả dụng — dùng top chunks sau RRF.")
     return candidates[: effective_config.rerank_top_n]
 
 
@@ -508,6 +612,10 @@ def documents_to_candidate_payload(docs: Iterable[Document]) -> List[Dict[str, A
             {
                 "id": document_id(doc),
                 "record_id": metadata.get("record_id", ""),
+                "source_doc": metadata.get("source_doc", ""),
+                "article": metadata.get("article", ""),
+                "clause": metadata.get("clause", ""),
+                "point": metadata.get("point", ""),
                 "text": doc.page_content,
                 "metadata": metadata,
                 "rrf_score": metadata.get("rrf_score", 0.0),

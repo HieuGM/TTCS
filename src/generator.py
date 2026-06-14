@@ -136,8 +136,15 @@ def ask_legal_bot(session_id: str, question: str):
             layer = doc.metadata.get("legal_layer", "N/A")
             subj = doc.metadata.get("subjects", [])
             tops = doc.metadata.get("topics", [])
+            rerank_source = doc.metadata.get("rerank_source", "rrf_only")
+            bge_rank = doc.metadata.get("bge_rank", "N/A")
+            bge_score = doc.metadata.get("bge_score")
+            score_text = f"{float(bge_score):.4f}" if bge_score is not None else "N/A"
             preview = doc.page_content.replace("\n", " ")[:120] + "..."
-            result_lines.append(f"[{i+1}] {layer.upper()} | Xe: {subj} | Chủ đề: {tops}")
+            result_lines.append(
+                f"[{i+1}] {layer.upper()} | Xe: {subj} | Chủ đề: {tops} | "
+                f"Rerank: {rerank_source} | Rank: {bge_rank} | Score: {score_text}"
+            )
             result_lines.append(f"    📝 {preview}")
         result_lines.append("================================================\n")
         print("\n".join(result_lines))
