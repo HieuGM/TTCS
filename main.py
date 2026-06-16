@@ -276,6 +276,19 @@ def get_cache_stats_safe(get_semantic_cache_fn, config):
         return default
 
 
+def render_router_notice(message: str | None, kind: str = "info", target=None) -> None:
+    """Hiển thị trạng thái phân luồng câu hỏi trong UI."""
+    if not message:
+        return
+    target = target or st
+    if kind == "rag":
+        target.success(message)
+    elif kind in {"warning", "fallback"}:
+        target.warning(message)
+    else:
+        target.info(message)
+
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════
@@ -363,6 +376,7 @@ st.markdown('<div class="styled-divider"></div>', unsafe_allow_html=True)
 # ── Hiển thị lịch sử chat ──
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
+        render_router_notice(msg.get("router_notice"), msg.get("route_kind", "info"))
         if msg.get("thinking"):
             with st.expander("🧠 Quy trình tư duy (Chain-of-Thought)", expanded=False):
                 st.markdown(msg["thinking"])
@@ -381,9 +395,21 @@ if prompt := st.chat_input("Nhập câu hỏi pháp lý (VD: Vượt đèn đỏ
         if ask_legal_bot_fn is None:
             st.error("❌ Backend chưa sẵn sàng. Vui lòng kiểm tra cấu hình .env và khởi động lại.")
         else:
+            router_state = {"message": None, "kind": "info"}
+            router_notice_box = st.empty()
+
+            def update_router_notice(message: str, kind: str = "info") -> None:
+                router_state["message"] = message
+                router_state["kind"] = kind
+                render_router_notice(message, kind, router_notice_box)
+
             with st.spinner("⏳ Đang tra cứu & phân tích..."):
                 try:
-                    raw_response = ask_legal_bot_fn(st.session_state.session_id, prompt)
+                    raw_response = ask_legal_bot_fn(
+                        st.session_state.session_id,
+                        prompt,
+                        status_callback=update_router_notice,
+                    )
                     thinking, main_answer = parse_thinking(raw_response)
 
                     if thinking:
@@ -396,6 +422,8 @@ if prompt := st.chat_input("Nhập câu hỏi pháp lý (VD: Vượt đèn đỏ
                         "role": "assistant",
                         "content": main_answer,
                         "thinking": thinking,
+                        "router_notice": router_state["message"],
+                        "route_kind": router_state["kind"],
                     })
                 except Exception as e:
                     error_msg = f"❌ Lỗi: {str(e)}"
@@ -406,6 +434,8 @@ if prompt := st.chat_input("Nhập câu hỏi pháp lý (VD: Vượt đèn đỏ
                         "role": "assistant",
                         "content": error_msg,
                         "thinking": None,
+                        "router_notice": router_state["message"],
+                        "route_kind": router_state["kind"],
                     })
 
 # Footer

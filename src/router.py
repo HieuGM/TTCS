@@ -1,5 +1,4 @@
-# File: src/router.py
-
+import re
 from enum import Enum
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -25,7 +24,69 @@ Nhiệm vụ:
 
 Chỉ trả lời duy nhất một từ "CHITCHAT" hoặc "RAG", tuyệt đối không giải thích thêm."""
 
+    _LEGAL_HINTS = (
+        "phạt",
+        "luật",
+        "nghị định",
+        "điều",
+        "khoản",
+        "điểm",
+        "vi phạm",
+        "giao thông",
+        "xe",
+        "mũ bảo hiểm",
+        "đèn đỏ",
+        "nồng độ cồn",
+        "giấy phép",
+        "bằng lái",
+        "tốc độ",
+        "làn đường",
+        "quá tải",
+        "chở",
+    )
+    _CHITCHAT_HINTS = (
+        "xin chào",
+        "chào",
+        "hello",
+        "hi",
+        "alo",
+        "cảm ơn",
+        "cam on",
+        "thanks",
+        "thank you",
+        "tạm biệt",
+        "tam biet",
+        "bye",
+        "bạn khỏe không",
+        "ban khoe khong",
+        "bạn là ai",
+        "ban la ai",
+        "ok",
+        "oke",
+        "test",
+    )
+
+    def _rule_based_route(self, query: str) -> QueryIntent | None:
+        """Nhận diện nhanh các câu giao tiếp ngắn để không cần gọi LLM router."""
+        normalized = " ".join(str(query or "").lower().split())
+        if not normalized:
+            return QueryIntent.CHITCHAT
+
+        if any(hint in normalized for hint in self._LEGAL_HINTS):
+            return None
+
+        cleaned = re.sub(r"[^\w\s]", " ", normalized)
+        cleaned = " ".join(cleaned.split())
+        if len(cleaned) <= 80 and any(hint in cleaned for hint in self._CHITCHAT_HINTS):
+            return QueryIntent.CHITCHAT
+
+        return None
+
     def route(self, query: str) -> QueryIntent:
+        rule_intent = self._rule_based_route(query)
+        if rule_intent is not None:
+            return rule_intent
+
         prompt = self.router_prompt_template.format(query=query)
         try:
             response = self.llm.invoke(prompt)

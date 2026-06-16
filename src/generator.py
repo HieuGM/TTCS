@@ -2,6 +2,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_mongodb.chat_message_histories import MongoDBChatMessageHistory
+from typing import Callable, Optional
+
 from .config import MONGODB_URI, DB_NAME, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from .retrieval_pipeline import retrieve_and_rerank
 from .router import SemanticRouter, QueryIntent
@@ -103,15 +105,48 @@ def format_context(documents):
         blocks.append(f"[Trạng thái hiệu lực: {raw_status}]\n{doc.page_content}")
     return "\n\n---\n\n".join(blocks)
 
-def ask_legal_bot(session_id: str, question: str):
+StatusCallback = Callable[[str, str], None]
+
+
+def _notify_status(
+    status_callback: Optional[StatusCallback],
+    message: str,
+    kind: str = "info",
+) -> None:
+    if status_callback is None:
+        return
+    try:
+        status_callback(message, kind)
+    except TypeError:
+        status_callback(message)  # type: ignore[misc]
+    except Exception:
+        pass
+
+
+def ask_legal_bot(
+    session_id: str,
+    question: str,
+    status_callback: Optional[StatusCallback] = None,
+):
     print("...Đang phân tích ý định câu hỏi (Semantic Routing)...")
+    _notify_status(
+        status_callback,
+        "Router đang phân tích ý định câu hỏi...",
+        "routing",
+    )
     intent = query_router.route(question)
     
     if intent == QueryIntent.CHITCHAT:
-        print("...[Router] Phát hiện hội thoại thường nhật (Bỏ qua RAG)...")
+        router_message = "Router: Phát hiện đối thoại thông thường, bỏ qua truy xuất RAG."
+        print(f"...[{router_message}]...")
+        _notify_status(status_callback, router_message, "chitchat")
         context_str = "HỘI THOẠI THƯỜNG NHẬT"
         print("...Đang tư duy trả lời...")
     else:
+        router_message = "Router: Phát hiện câu hỏi pháp lý, kích hoạt truy xuất RAG."
+        print(f"...[{router_message}]...")
+        _notify_status(status_callback, router_message, "rag")
+
         # ── SEMANTIC CACHE: Kiểm tra cache trước khi chạy RAG ──
         cache = get_semantic_cache()
         if cache.enabled:

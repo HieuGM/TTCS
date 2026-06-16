@@ -143,6 +143,15 @@ def _make_entry(
     }
 
 
+def _as_utc_datetime(value: Any) -> Optional[datetime]:
+    """Chuẩn hóa datetime từ MongoDB/in-memory về timezone-aware UTC."""
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SemanticCache
 # ──────────────────────────────────────────────────────────────────────────────
@@ -273,13 +282,15 @@ class SemanticCache:
                     key = entry.get("query", "")
                     if not key or key in self._memory_cache:
                         continue
+                    created_at = _as_utc_datetime(entry.get("created_at")) or datetime.now(timezone.utc)
+                    last_hit_at = _as_utc_datetime(entry.get("last_hit_at"))
                     self._memory_cache[key] = {
                         "embedding": np.array(entry["embedding"], dtype=np.float32),
                         "response": entry["response"],
                         "original_query": entry.get("original_query", key),
                         "normalized_query": entry.get("normalized_query", key),
-                        "created_at": entry["created_at"],
-                        "last_hit_at": entry.get("last_hit_at"),
+                        "created_at": created_at,
+                        "last_hit_at": last_hit_at,
                         "hit_count": entry.get("hit_count", 0),
                         "response_length": entry.get("response_length", len(entry["response"])),
                         "embedding_dim": entry.get("embedding_dim", len(entry["embedding"])),
@@ -345,12 +356,11 @@ class SemanticCache:
 
     def _is_expired(self, created_at: Any) -> bool:
         """Kiểm tra entry đã hết hạn chưa."""
-        if not isinstance(created_at, datetime):
+        normalized_created_at = _as_utc_datetime(created_at)
+        if normalized_created_at is None:
             return True
         now = datetime.now(timezone.utc)
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        return (now - created_at) > timedelta(hours=self.ttl_hours)
+        return (now - normalized_created_at) > timedelta(hours=self.ttl_hours)
 
     def _evict_lru(self) -> None:
         """Xóa entries cũ nhất nếu vượt max_size (phải hold _lock)."""
@@ -643,8 +653,8 @@ class SemanticCache:
             oldest: Optional[datetime] = None
             newest: Optional[datetime] = None
             for entry in self._memory_cache.values():
-                ca = entry.get("created_at")
-                if isinstance(ca, datetime):
+                ca = _as_utc_datetime(entry.get("created_at"))
+                if ca is not None:
                     if oldest is None or ca < oldest:
                         oldest = ca
                     if newest is None or ca > newest:
