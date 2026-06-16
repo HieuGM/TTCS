@@ -3,7 +3,7 @@ import logging
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import requests
 from langchain_core.documents import Document
@@ -18,6 +18,22 @@ from .pipeline_config import DEFAULT_RETRIEVAL_CONFIG, RetrievalPipelineConfig
 logger = logging.getLogger(__name__)
 _INDEXER_CACHE: Optional[Tuple[Any, Any]] = None
 _STATIC_QUERY_EXPANSION_CACHE: Dict[Path, Tuple[float, Dict[str, List[str]]]] = {}
+StatusCallback = Callable[[str, str], None]
+
+
+def _notify_status(
+    status_callback: Optional[StatusCallback],
+    message: str,
+    kind: str = "info",
+) -> None:
+    if status_callback is None:
+        return
+    try:
+        status_callback(message, kind)
+    except TypeError:
+        status_callback(message)  # type: ignore[misc]
+    except Exception:
+        pass
 
 
 QUERY_NORMALIZATION_RULES: Dict[Tuple[str, ...], str] = {
@@ -385,14 +401,40 @@ def rrf_fuse(
 def retrieve_rrf_candidates(
     query: str,
     config: RetrievalPipelineConfig = DEFAULT_RETRIEVAL_CONFIG,
+    status_callback: Optional[StatusCallback] = None,
 ) -> Tuple[List[Document], List[str]]:
+    _notify_status(status_callback, "Đang mở rộng truy vấn tìm kiếm...", "query_generation")
     queries = generate_query_variants(query, config)
+    if queries:
+        query_lines = "\n".join(
+            f"{index}. {expanded_query}"
+            for index, expanded_query in enumerate(queries, start=1)
+        )
+        _notify_status(
+            status_callback,
+            f"Truy vấn sẽ dùng:\n{query_lines}",
+            "queries",
+        )
+
     ranked_sources: List[Tuple[str, Sequence[Document]]] = []
     total_text_docs = 0
 
     for index, expanded_query in enumerate(queries):
+        _notify_status(
+            status_callback,
+            f"Đang truy xuất Dense Vector và BM25 cho truy vấn {index + 1}/{len(queries)}...",
+            "retrieval",
+        )
         vector_docs = vector_search(expanded_query, config.rrf_top_k)
         text_docs = atlas_text_search(expanded_query, config.rrf_top_k, config)
+        _notify_status(
+            status_callback,
+            (
+                f"Truy vấn {index + 1}: lấy được {len(vector_docs)} vector docs "
+                f"và {len(text_docs)} BM25 docs."
+            ),
+            "retrieval_result",
+        )
         total_text_docs += len(text_docs)
         ranked_sources.append((f"q{index}_vector", vector_docs))
         ranked_sources.append((f"q{index}_text", text_docs))
@@ -405,10 +447,13 @@ def retrieve_rrf_candidates(
             "Verify that a text Atlas Search index exists and is queryable."
         )
 
-    return (
-        rrf_fuse(ranked_sources, top_k=config.rrf_top_k, c=config.rrf_c),
-        queries,
+    fused_docs = rrf_fuse(ranked_sources, top_k=config.rrf_top_k, c=config.rrf_c)
+    _notify_status(
+        status_callback,
+        f"Đã hợp nhất RRF và giữ {len(fused_docs)} candidates tốt nhất.",
+        "rrf",
     )
+    return fused_docs, queries
 
 
 
@@ -549,12 +594,13 @@ def retrieve_and_rerank(
     top_k: Optional[int] = None,
     top_n: Optional[int] = None,
     config: RetrievalPipelineConfig = DEFAULT_RETRIEVAL_CONFIG,
+    status_callback: Optional[StatusCallback] = None,
 ) -> List[Document]:
     if not query or not query.strip():
         return []
 
     effective_config = config.with_overrides(rrf_top_k=top_k, rerank_top_n=top_n)
-    candidates, queries = retrieve_rrf_candidates(query, effective_config)
+    candidates, queries = retrieve_rrf_candidates(query, effective_config, status_callback=status_callback)
 
     logger.info("Expanded queries: %s", queries)
     logger.info("RRF candidates: %s", len(candidates))
@@ -562,33 +608,77 @@ def retrieve_and_rerank(
     if effective_config.enable_remote_bge_rerank:
         try:
             print("...Đang rerank bằng Colab T4 Remote BGE...")
+            _notify_status(
+                status_callback,
+                f"Đang rerank {len(candidates)} candidates bằng Remote BGE...",
+                "rerank",
+            )
             reranked_docs = remote_bge_rerank(query, candidates, effective_config)
             top_score = reranked_docs[0].metadata.get("bge_score") if reranked_docs else None
             if top_score is None:
                 print(f"✅ Remote BGE rerank thành công từ Colab T4: {len(reranked_docs)} chunks.")
+                _notify_status(
+                    status_callback,
+                    f"Remote BGE rerank xong: chọn {len(reranked_docs)} chunks.",
+                    "rerank_done",
+                )
             else:
                 print(
                     f"✅ Remote BGE rerank thành công từ Colab T4: "
                     f"{len(reranked_docs)} chunks | top_score={float(top_score):.4f}"
                 )
+                _notify_status(
+                    status_callback,
+                    (
+                        f"Remote BGE rerank xong: chọn {len(reranked_docs)} chunks, "
+                        f"top_score={float(top_score):.4f}."
+                    ),
+                    "rerank_done",
+                )
             return reranked_docs
         except Exception as exc:
             logger.warning("Remote BGE rerank failed: %s", exc)
             print(f"⚠️ Remote BGE rerank lỗi, chuyển fallback: {exc}")
+            _notify_status(
+                status_callback,
+                f"Remote BGE rerank lỗi, chuyển fallback: {exc}",
+                "warning",
+            )
 
     if effective_config.enable_local_bge_rerank:
         try:
             print("...Đang rerank bằng Local BGE...")
-            return bge_rerank(query, candidates, effective_config)
+            _notify_status(
+                status_callback,
+                f"Đang rerank {len(candidates)} candidates bằng Local BGE...",
+                "rerank",
+            )
+            reranked_docs = bge_rerank(query, candidates, effective_config)
+            _notify_status(
+                status_callback,
+                f"Local BGE rerank xong: chọn {len(reranked_docs)} chunks.",
+                "rerank_done",
+            )
+            return reranked_docs
         except Exception as exc:
             logger.warning("Local BGE rerank failed: %s", exc)
             print(f"⚠️ Local BGE rerank lỗi, dùng kết quả RRF: {exc}")
+            _notify_status(
+                status_callback,
+                f"Local BGE rerank lỗi, dùng kết quả RRF: {exc}",
+                "warning",
+            )
 
     logger.warning(
         "BGE rerank is disabled or unavailable. Returning top %s chunks after RRF.",
         effective_config.rerank_top_n,
     )
     print("⚠️ BGE rerank không khả dụng — dùng top chunks sau RRF.")
+    _notify_status(
+        status_callback,
+        f"BGE rerank không khả dụng, dùng top {effective_config.rerank_top_n} chunks sau RRF.",
+        "fallback",
+    )
     return candidates[: effective_config.rerank_top_n]
 
 

@@ -216,6 +216,7 @@ class SemanticCache:
 
         # Embedding model
         self._embeddings: Optional[Any] = None
+        self._embedding_init_attempted: bool = False
 
         # Vectorized matrix (lazy rebuild)
         self._cached_keys: List[str] = []
@@ -228,7 +229,6 @@ class SemanticCache:
 
         if self.enabled:
             self._init_mongodb()
-            self._init_embeddings()
             self._load_from_db()
 
     # ── Initialization ────────────────────────────────────────────────────────
@@ -259,6 +259,9 @@ class SemanticCache:
 
     def _init_embeddings(self) -> None:
         """Khởi tạo embedding model (singleton)."""
+        if self._embedding_init_attempted:
+            return
+        self._embedding_init_attempted = True
         try:
             self._embeddings = _get_embedding_model()
         except Exception as exc:
@@ -318,7 +321,9 @@ class SemanticCache:
     def _embed_query(self, query: str) -> Optional[np.ndarray]:
         """Tính embedding vector. Trả về None nếu lỗi."""
         if self._embeddings is None:
-            return None
+            self._init_embeddings()
+            if self._embeddings is None:
+                return None
         try:
             vector = self._embeddings.embed_query(query)
             arr = np.array(vector, dtype=np.float32)

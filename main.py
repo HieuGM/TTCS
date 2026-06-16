@@ -15,6 +15,18 @@ from pathlib import Path
 
 def _running_in_streamlit() -> bool:
     """Detect whether this script is being executed by the Streamlit runner."""
+    original_args = " ".join(getattr(sys, "orig_argv", sys.argv)).lower()
+    if "streamlit" in original_args and " run " in f" {original_args} ":
+        return True
+
+    try:
+        from streamlit import runtime
+
+        if runtime.exists():
+            return True
+    except Exception:
+        pass
+
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
 
@@ -281,12 +293,30 @@ def render_router_notice(message: str | None, kind: str = "info", target=None) -
     if not message:
         return
     target = target or st
-    if kind == "rag":
+    if kind in {"rag", "cache_hit", "rerank_done", "cache_store"}:
         target.success(message)
     elif kind in {"warning", "fallback"}:
         target.warning(message)
     else:
         target.info(message)
+
+
+def render_process_steps(steps, target=None, expanded: bool = True) -> None:
+    """Render danh sách các bước xử lý đã nhận từ backend."""
+    if not steps:
+        return
+
+    host = target or st
+    with host.container():
+        with st.expander("Quy trình xử lý", expanded=expanded):
+            for step in steps:
+                if isinstance(step, dict):
+                    message = step.get("message")
+                    kind = step.get("kind", "info")
+                else:
+                    message = str(step)
+                    kind = "info"
+                render_router_notice(message, kind)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -376,7 +406,11 @@ st.markdown('<div class="styled-divider"></div>', unsafe_allow_html=True)
 # ── Hiển thị lịch sử chat ──
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        render_router_notice(msg.get("router_notice"), msg.get("route_kind", "info"))
+        process_steps = msg.get("process_steps")
+        if process_steps:
+            render_process_steps(process_steps, expanded=False)
+        else:
+            render_router_notice(msg.get("router_notice"), msg.get("route_kind", "info"))
         if msg.get("thinking"):
             with st.expander("🧠 Quy trình tư duy (Chain-of-Thought)", expanded=False):
                 st.markdown(msg["thinking"])
@@ -396,12 +430,14 @@ if prompt := st.chat_input("Nhập câu hỏi pháp lý (VD: Vượt đèn đỏ
             st.error("❌ Backend chưa sẵn sàng. Vui lòng kiểm tra cấu hình .env và khởi động lại.")
         else:
             router_state = {"message": None, "kind": "info"}
-            router_notice_box = st.empty()
+            process_steps = []
+            process_steps_box = st.empty()
 
             def update_router_notice(message: str, kind: str = "info") -> None:
                 router_state["message"] = message
                 router_state["kind"] = kind
-                render_router_notice(message, kind, router_notice_box)
+                process_steps.append({"message": message, "kind": kind})
+                render_process_steps(process_steps, target=process_steps_box, expanded=True)
 
             with st.spinner("⏳ Đang tra cứu & phân tích..."):
                 try:
@@ -424,6 +460,7 @@ if prompt := st.chat_input("Nhập câu hỏi pháp lý (VD: Vượt đèn đỏ
                         "thinking": thinking,
                         "router_notice": router_state["message"],
                         "route_kind": router_state["kind"],
+                        "process_steps": process_steps,
                     })
                 except Exception as e:
                     error_msg = f"❌ Lỗi: {str(e)}"
@@ -436,6 +473,7 @@ if prompt := st.chat_input("Nhập câu hỏi pháp lý (VD: Vượt đèn đỏ
                         "thinking": None,
                         "router_notice": router_state["message"],
                         "route_kind": router_state["kind"],
+                        "process_steps": process_steps,
                     })
 
 # Footer

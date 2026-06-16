@@ -151,6 +151,7 @@ def ask_legal_bot(
         cache = get_semantic_cache()
         if cache.enabled:
             print("...Đang kiểm tra Semantic Cache...")
+            _notify_status(status_callback, "Đang kiểm tra Semantic Cache...", "cache")
             cached_response = cache.lookup(question)
             if cached_response is not None:
                 cache_stats = cache.stats()
@@ -158,14 +159,26 @@ def ask_legal_bot(
                 print(f"   📊 Cache: {cache_stats['memory_entries']} entries | "
                       f"Tổng hits: {cache_stats['total_hits']} | "
                       f"Threshold: {cache_stats['similarity_threshold']}")
+                _notify_status(
+                    status_callback,
+                    "Semantic Cache: HIT - dùng lại câu trả lời đã lưu.",
+                    "cache_hit",
+                )
                 return cached_response
             print("⚡ CACHE MISS — Không có câu trả lời phù hợp trong Semantic Cache.")
+            _notify_status(
+                status_callback,
+                "Semantic Cache: MISS - chuyển sang truy xuất tài liệu.",
+                "cache_miss",
+            )
         else:
             print("⚡ Semantic Cache: TẮT — Bỏ qua kiểm tra cache.")
+            _notify_status(status_callback, "Semantic Cache đang tắt, bỏ qua cache.", "cache_disabled")
 
         # ── Cache MISS → Chạy full RAG pipeline ──
         print("...Đang truy xuất và đánh giá lại (Reranking) tài liệu...")
-        docs = retrieve_and_rerank(question)
+        _notify_status(status_callback, "Bắt đầu pipeline truy xuất tài liệu pháp lý...", "pipeline")
+        docs = retrieve_and_rerank(question, status_callback=status_callback)
         result_lines = ["\n🏆 === TOP 7 KẾT QUẢ TRẢ VỀ TỪ CƠ SỞ DỮ LIỆU ==="]
         for i, doc in enumerate(docs[:7]):
             layer = doc.metadata.get("legal_layer", "N/A")
@@ -185,6 +198,14 @@ def ask_legal_bot(
         print("\n".join(result_lines))
         context_str = format_context(docs)
         print("...Đang tư duy luật (CoT & Reflection)...")
+        _notify_status(
+            status_callback,
+            f"Đã chuẩn bị {len(docs)} chunks ngữ cảnh, đang gọi LLM tạo câu trả lời...",
+            "answer_generation",
+        )
+
+    if intent == QueryIntent.CHITCHAT:
+        _notify_status(status_callback, "Đang gọi LLM trả lời hội thoại thường nhật...", "answer_generation")
 
     response = chain_with_history.invoke(
         {"question": question, "context": context_str},
@@ -199,9 +220,9 @@ def ask_legal_bot(
         if cache.enabled:
             cache.store(question, result)
             print("💾 Đã lưu câu trả lời vào Semantic Cache.")
+            _notify_status(status_callback, "Đã lưu câu trả lời mới vào Semantic Cache.", "cache_store")
 
     return result
-
 
 
 
