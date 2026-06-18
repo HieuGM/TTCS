@@ -5,7 +5,7 @@
 !/src/
 !/main.py
 !/.gitignore
-!/person3_resolved.jsonl
+!/person3_resolved_2.jsonl
 !/requirements.txt
 !/README.md
 !/colab_remote_rerank_server.py
