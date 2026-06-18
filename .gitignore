@@ -1,14 +1,31 @@
-# 1. Chặn toàn bộ project
+# 1. Chan toan bo project
 /*
 
-# 2. Mở khóa các file/thư mục cần thiết (Whitelist)
+# 2. Whitelist cac file/thu muc can thiet
 !/src/
 !/main.py
 !/.gitignore
 !/person3_resolved.jsonl
-#!/requirements.txt
+!/requirements.txt
+!/README.md
+!/colab_remote_rerank_server.py
+!/evaluate_retrieval.py
+!/evaluate_retrieval_export.py
+!/evaluate_reranked_retrieval.py
+!/colab_bge_rerank_eval.py
+!/colab_bge_rerank_eval.ipynb
+!/evaluate/
+!/evaluate/retrieval.py
+!/evaluate/retrieval_vietnamese_bi_encoder.py
+!/evaluate/metrics.py
 
-# 3. Chốt chặn các file nhạy cảm (Phải để dưới cùng để đè lên Whitelist trên)
+# 3. Chan ro cac file/thu muc khong commit
+/chunk/
+/evaluate/logs/
+/ground_truth/
+/grouth_truth/
 **/__pycache__/
+__pycache__/
 *.pyc
+AGENTS.md
 **/.env

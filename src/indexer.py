@@ -1,25 +1,35 @@
 import json
+import warnings
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
 from langchain_mongodb import MongoDBAtlasVectorSearch
 from pymongo import MongoClient
 import os
-from .config import MONGODB_URI, DB_NAME, COLLECTION_NAME, OPENAI_API_KEY
+from .config import MONGODB_URI, DB_NAME, COLLECTION_NAME
+from langchain_community.embeddings import HuggingFaceEmbeddings
+
+try:
+    from langchain_core._api.deprecation import LangChainDeprecationWarning
+except ImportError:
+    LangChainDeprecationWarning = Warning
+
+
+DEFAULT_EMBEDDING_MODEL = "Quockhanh05/Vietnam_legal_embeddings"
+DEFAULT_VECTOR_INDEX = "vector_index"
 
 def get_indexer():
     client = MongoClient(MONGODB_URI)
     db = client[DB_NAME]
     collection = db[COLLECTION_NAME]
     
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small",
-        api_key=OPENAI_API_KEY
-    )
+    model_name = os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
+        embeddings = HuggingFaceEmbeddings(model_name=model_name)
     
     vectorStore = MongoDBAtlasVectorSearch(
         collection=collection,
         embedding=embeddings,
-        index_name="vector_index", # Tên index đã được định nghĩa trên Atlas
+        index_name=os.getenv("MONGODB_VECTOR_SEARCH_INDEX", DEFAULT_VECTOR_INDEX),
         relevance_score_fn="cosine",
         text_key="text",
         embedding_key="embedding"

@@ -1,0 +1,17 @@
+langchain==0.3.27
+langchain_community==0.3.31
+langchain-core==0.3.86
+langchain-openai==0.3.35
+langchain-mongodb==0.6.2
+pymongo
+python-dotenv
+FlagEmbedding
+transformers<5
+streamlit
+sentence-transformers
+numpy
+requests
+fastapi
+uvicorn
+nest_asyncio
+python-multipart
