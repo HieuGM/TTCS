@@ -188,11 +188,11 @@ def generate_query_variants(
     if config.generated_query_count <= 0:
         return queries
 
-    static_variants = _static_query_variants(normalized, config, fallback_query=original)
-    if static_variants:
-        for variant in static_variants:
-            _append_unique_query(queries, variant)
-        return queries
+    # static_variants = _static_query_variants(normalized, config, fallback_query=original)
+    # if static_variants:
+    #     for variant in static_variants:
+    #         _append_unique_query(queries, variant)
+    #     return queries
 
     if not config.enable_query_generation:
         return queries
@@ -205,13 +205,15 @@ def generate_query_variants(
     - tên hành vi vi phạm theo ngôn ngữ pháp lý chính thức;
     - đối tượng hoặc phương tiện liên quan;
     - căn cứ về mức phạt tiền;
-    - căn cứ về hình phạt bổ sung hoặc tước giấy phép;
+    - căn cứ về trừ điểm giấy phép lái xe hoặc hình phạt bổ sung;
     - căn cứ về biện pháp khắc phục hậu quả;
     - trường hợp đặc biệt nếu có trong câu hỏi như gây tai nạn, không có giấy phép, chở quá số người, quá tải, nồng độ cồn, vượt đèn đỏ.
+    - nên sử dụng từ ngữ pháp lí  ví dụ: vượt đèn đỏ -> không chấp hành tín hiệu đèn giao thông, xe cấp cứu -> xe ưu tiên...
 
     Ràng buộc:
     - Không tạo các câu đồng nghĩa đơn thuần.
     - Không mở rộng sang lỗi vi phạm khác nếu câu hỏi gốc không gợi ý.
+    - Ưu tiên sử dụng thuật ngữ xuất hiện trong văn bản quy phạm pháp luật.
     - Không trả lời câu hỏi.
     - Không nêu nhận xét.
     - Chỉ trả về đúng {config.generated_query_count} dòng, mỗi dòng là một truy vấn tìm kiếm hoàn chỉnh.

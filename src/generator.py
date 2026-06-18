@@ -76,6 +76,80 @@ chain_with_history = RunnableWithMessageHistory(
     input_messages_key="question",
     history_messages_key="history",
 )
+#
+
+from langchain_core.messages import HumanMessage, AIMessage
+
+
+def rewrite_question(
+    question: str,
+    messages: list,
+    llm,
+) -> str:
+    """
+    Viết lại câu hỏi dựa trên lịch sử hội thoại.
+    Nếu câu hỏi đã đầy đủ ngữ nghĩa thì giữ nguyên.
+    """
+
+    if not messages:
+        return question
+
+    history = []
+
+    for msg in messages[-10:]:
+        if isinstance(msg, HumanMessage):
+            history.append(f"Người dùng: {msg.content}")
+        elif isinstance(msg, AIMessage):
+            history.append(f"Trợ lý: {msg.content}")
+
+    history_text = "\n".join(history)
+
+    prompt = f"""
+Bạn là bộ viết lại câu hỏi cho hệ thống Legal RAG.
+
+Lịch sử hội thoại:
+{history_text}
+
+Câu hỏi hiện tại:
+{question}
+
+Nhiệm vụ:
+
+- Nếu câu hỏi hiện tại phụ thuộc ngữ cảnh trước đó,
+hãy viết lại thành một câu hỏi độc lập và đầy đủ.
+
+- Nếu câu hỏi hiện tại đã đầy đủ ngữ nghĩa và không phụ thuộc vào ngữ cảnh trước đó,
+giữ nguyên.
+
+- Không trả lời câu hỏi.
+
+- Không giải thích.
+
+- Chỉ xuất ra duy nhất câu hỏi cuối cùng.
+
+Ví dụ:
+
+Lịch sử:
+Người dùng: Tôi đi xe máy không đội mũ bảo hiểm thì bị gì?
+
+Câu hỏi:
+Nếu tôi gây tai nạn thì sao?
+
+Kết quả:
+Nếu người điều khiển xe máy, xe mô tô không đội mũ bảo hiểm gây tai nạn giao thông thì bị xử phạt như thế nào?
+"""
+
+    try:
+        response = llm.invoke(prompt)
+        rewritten = response.content.strip()
+
+        if rewritten:
+            return rewritten
+
+    except Exception:
+        pass
+
+    return question
 
 # ── Semantic Cache Singleton (lazy init) ──────────────────────
 
@@ -147,12 +221,21 @@ def ask_legal_bot(
         print(f"...[{router_message}]...")
         _notify_status(status_callback, router_message, "rag")
 
+        history_store = get_session_history(session_id)
+
+        rewritten_question = rewrite_question(
+            question,
+            history_store.messages,
+            llm,
+        )
+        print("Original :", question)
+        print("Rewritten:", rewritten_question)
         # ── SEMANTIC CACHE: Kiểm tra cache trước khi chạy RAG ──
         cache = get_semantic_cache()
         if cache.enabled:
             print("...Đang kiểm tra Semantic Cache...")
             _notify_status(status_callback, "Đang kiểm tra Semantic Cache...", "cache")
-            cached_response = cache.lookup(question)
+            cached_response = cache.lookup(rewritten_question)
             if cached_response is not None:
                 cache_stats = cache.stats()
                 print(f"\n⚡ CACHE HIT — Trả lời từ Semantic Cache!")
@@ -178,7 +261,7 @@ def ask_legal_bot(
         # ── Cache MISS → Chạy full RAG pipeline ──
         print("...Đang truy xuất và đánh giá lại (Reranking) tài liệu...")
         _notify_status(status_callback, "Bắt đầu pipeline truy xuất tài liệu pháp lý...", "pipeline")
-        docs = retrieve_and_rerank(question, status_callback=status_callback)
+        docs = retrieve_and_rerank(rewritten_question, status_callback=status_callback)
         result_lines = ["\n🏆 === TOP 7 KẾT QUẢ TRẢ VỀ TỪ CƠ SỞ DỮ LIỆU ==="]
         for i, doc in enumerate(docs[:7]):
             layer = doc.metadata.get("legal_layer", "N/A")
@@ -218,7 +301,7 @@ def ask_legal_bot(
     if intent != QueryIntent.CHITCHAT:
         cache = get_semantic_cache()
         if cache.enabled:
-            cache.store(question, result)
+            cache.store(rewritten_question, result)
             print("💾 Đã lưu câu trả lời vào Semantic Cache.")
             _notify_status(status_callback, "Đã lưu câu trả lời mới vào Semantic Cache.", "cache_store")
 
