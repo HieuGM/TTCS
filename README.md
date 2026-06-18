@@ -71,18 +71,61 @@ pip install -r requirements.txt
 Tao file `.env` o root project. Khong commit file nay.
 
 ```env
-MONGODB_URI=...
+MONGODB_URI=
 DB_NAME=legal
-COLLECTION_NAME=legal_col
+COLLECTION_NAME=legal_v2
+EMBEDDING_MODEL="bkai-foundation-models/vietnamese-bi-encoder"
+MONGODB_VECTOR_SEARCH_INDEX="vector_index"
+MONGODB_TEXT_SEARCH_INDEX="default"
+MONGODB_TEXT_SEARCH_FIELD="text"
+OPENAI_API_KEY=
+GOOGLE_API_KEY=
+OPENROUTE_API_KEY=
+DEEPSEEK_API_KEY=
 
-OPENAI_API_KEY=...
+# Bat/tat sinh query dong nghia bang DeepSeek.
+ENABLE_QUERY_GENERATION=true
 
-DEEPSEEK_API_KEY=...
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=...
+# So query bo sung can sinh. Tong query toi da = query goc + gia tri nay.
+GENERATED_QUERY_COUNT=3
+
+# So chunk giu lai sau RRF. Day la candidate pool export sang Colab.
+RRF_TOP_K=100
+
+# So chunk lay ra sau reranker/de dua vao LLM.
+RERANK_TOP_N=20
+
+# Atlas Search text index dung cho BM25/Lucene search tren MongoDB.
+MONGODB_TEXT_SEARCH_INDEX=default
+MONGODB_TEXT_SEARCH_FIELD=text
+
+# BGE reranker. Mac dinh tat local rerank vi may local CPU-only se cham.
+BGE_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+ENABLE_REMOTE_BGE_RERANK=true
+REMOTE_BGE_RERANK_BASE_URL=
+REMOTE_BGE_RERANK_URL=
+REMOTE_BGE_RERANK_API_KEY=change-me
+REMOTE_BGE_RERANK_TIMEOUT_SECONDS=360
+REMOTE_EVAL_RERANK_URL=
+REMOTE_EVAL_RERANK_BATCH_URL=
+REMOTE_EVAL_RERANK_TIMEOUT_SECONDS=360
+REMOTE_EVAL_RERANK_BATCH_SIZE=10
+REMOTE_EVAL_RERANK_MAX_RETRIES=5
+REMOTE_EVAL_RERANK_RETRY_SLEEP_SECONDS=10
+ENABLE_LOCAL_BGE_RERANK=false
+BGE_USE_FP16=false
+
+# RRF constant.
+RRF_C=60
+
+# Semantic cache. Doi thanh false neu muon bo qua cache va luon chay RAG/rerank.
+ENABLE_SEMANTIC_CACHE=true
+CACHE_SIMILARITY_THRESHOLD=0.92
+CACHE_TTL_HOURS=168
+CACHE_MAX_SIZE=500
+CACHE_COLLECTION_NAME=semantic_cache
+HF_HOME=D:\hf_cache
 ```
-
-`OPENAI_API_KEY` dung cho embedding query. `DEEPSEEK_API_KEY` dung cho query generation neu bat va dung cho cau tra loi cuoi trong pipeline chinh.
 
 ## MongoDB Atlas Index
 
@@ -90,7 +133,7 @@ Collection hien dang duoc cau hinh:
 
 ```text
 Database: legal
-Collection: legal_col
+Collection: legal_v2
 Atlas Search index: default
 Vector Search index: vector_index
 Vector field: embedding
