@@ -1,13 +1,16 @@
 # Legal RAG MongoDB Hybrid Pipeline
 
-Ung dung CLI Legal RAG cho van ban phap luat Viet Nam. Branch nay da thay pipeline cu bang pipeline moi:
+Ung dung Legal RAG cho van ban phap luat Viet Nam. 
 
 ```text
 User query
--> optional query generation
+-> semantic router
+-> rewrite query if need
+-> semantic Cache
+-> query generation
 -> MongoDB Atlas Vector Search + Atlas Search BM25
 -> RRF fusion
--> optional BGE reranker
+-> BGE reranker
 -> top chunks
 -> DeepSeek LLM answer
 ```
@@ -16,22 +19,20 @@ Phan danh gia retrieval chi tinh metric tren chunk/document id, khong can sinh c
 
 ## Cau Truc Chinh
 
-- `main.py`: CLI de hoi dap.
+- `main.py`: Khoi chay app.
 - `src/generator.py`: format context, goi retrieval pipeline va DeepSeek LLM.
 - `src/retrieval_pipeline.py`: hybrid retrieval, RRF, optional BGE rerank.
 - `src/pipeline_config.py`: doc cau hinh pipeline tu `.env`.
-- `evaluate_retrieval_export.py`: export candidate retrieval tu MongoDB cho toan bo ground truth.
-- `colab_bge_rerank_eval.py`: rerank candidates bang BGE va tinh retrieval metrics tren Colab/GPU.
-- `colab_bge_rerank_eval.ipynb`: notebook Colab toi thieu de chay script rerank/eval.
-- `evaluate_reranked_retrieval.py`: tinh metric retrieval offline tu file JSON da rerank san.
-- `ground_truth/grounth_truth_record_id.csv`: ground truth chinh, 99 dong.
-- `rerank_chunk/reranked_legal_results.json`: vi du file candidates da rerank.
+- `src/router.py`: thiet ke router phan loai y dinh cau hoi
+- `src/semantic_cache.py`: thiet ke semantic cache luu lich su cau hoi va cau tra loi
+- `evaluate`: danh gia chat luong chatbot
+- `colab_remote_rerank_server.py`: rerank candidates bang BGE va tinh retrieval metrics tren Colab/GPU.
 
 ## Requirements
 
 Nen dung Python trong conda env `legal-rag`.
 
-Noi dung day du cua `requirements.txt` hien tai:
+Noi dung day du cua `requirements.txt`:
 
 ```text
 langchain
